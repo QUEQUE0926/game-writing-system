@@ -36,6 +36,7 @@
 1. **拖放弹窗**：拖 txt 到 `drop-import-dev.bat` / `drop-import-prod.bat` → tkinter 弹窗预填（系列/游戏/版本），**边填边实时查库**（绿色=复用/新建明细，红色=冲突/重复警告），点导入再弹确认框 → 源文件**原地不动**，复制副本到 `data/<env>/inbox/drop-import/` → 导入成功自动删副本，失败保留副本排查。注意：bat 必须指向**系统 Python**（`C:\Users\Administrator\AppData\Local\Programs\Python\Python313\python.exe`），便携版 3.13.12 无 tkinter。
 2. **prepare / auto-import**：inbox 扫描自动导入。
 3. **CLI**（`scripts/gws.py`）：`init / info / create-* / import-txt / import-files / rename-*/ add-alias / find / list / export-html`。`find <名字>` 模糊查三类档案并排显示门牌（系列→游戏→版本）+ id，多命中绝不猜。
+4. **查询档案.bat**（2026-09-12 新增，双击运行）：输入名字关键词 → 显示门牌 + **源文件完整本地路径** + 台词数 + 原文是否还在（丢失会标注）。只读。脚本在 `scripts/find_tool.py`，默认查 dev 环境。
 
 ### 关键业务规则
 - 命名规范：`系列 - 游戏 - 版本.txt`（无系列则 `游戏 - 版本.txt`），默认系列=游戏名，`#N` 为同版本多实况序号。
@@ -45,15 +46,26 @@
 - 导入只接受 `.txt`（docx 支持已按用户要求撤销）。
 - 只读原文归档：`data/<env>/raw/<sha前2位>/<sha>.txt`，永不覆盖。
 
-## 三、当前卡在哪
+## 三、当前状态（2026-09-12 凌晨更新）
 
-**没有卡点。** dev/prod 均为干净空库（用户确认清空过），随时可投喂真实 TXT。
+**没有卡点，且 dev 库已有真实数据**：
+- **dev 环境已导入 6 个源文件、4611 句台词段**（speaker 全为 unknown）：沃德灵：共生 204 句 / 星际争霸2 415 句 / 银翼喵侍 209 句 / 镇邪Ⅱ 3262 句 / 星际裂变 518+3 句。全部 GBK 编码，原文在 `data/dev/raw/` 完好。
+- **dev 数据已清空过一次**（用户要求），清空方式是逐表 DELETE；旧库备份在 `data/dev/backups/app.db.bak-20260912`。**上面那批数据是清空后重新导入的**。
+- **工作分支常驻 dev**（不要把文件夹切到 main——main 上没有 dev 的新文件，切过去用户会看到文件"消失"，2026-09-12 踩过一次）。
+- prod 仍是干净空库。
+- 遗留小瑕疵（用户还没拍板处理）：① 银翼喵侍的版本名是 `dmeo`（demo 打错）；② 星际裂变下挂着一个 159 字节的 test 小文件（3 句台词，当时测试用），删留未定。
 
 ## 四、下一步计划（主线）
 
-**按 14_MVP_TASKS / 15_IMPLEMENTATION_ORDER，下一步是第 4 步：Speaker 分类** —— 把 segments 的 speaker 从 `unknown` 分类到 8 类。**枚举以 AGENTS.md 唯一注册表为准：author / teammate / npc / ui / subtitle / game_audio / asr_error / unknown**（旧版交接文档里写的 "system" 是笔误，AGENTS.md 里没有这个值）。之后是第 5 步 Episode 切分。
+**第 4 步：Speaker 分类** —— 把 4611 句的 speaker 从 `unknown` 分类到 8 类。**枚举以 AGENTS.md 唯一注册表为准：author / teammate / npc / ui / subtitle / game_audio / asr_error / unknown**（旧版交接文档里写的 "system" 是笔误，AGENTS.md 里没有这个值）。之后是第 5 步 Episode 切分。
 
-**用户已明确的流程要求**：第 4 步动手前先出方案、逐轮确认；改动全部走 dev 分支。
+**已向用户提过的初步方案（等确认后先做侦察）**：
+1. 规则粗筛（零成本）：标点/模板/UI 短语/超短行 → 高置信分类；
+2. 人工校准：给用户看统计报表 + 抽样；
+3. 难句 AI 细筛（author vs teammate 等真人口语）。
+第一步是**侦察**：只读抽看各文件几十行，摸清文稿格式（有无说话人前缀、空行规律）。
+
+**用户已明确的流程要求**：动手前先出方案、逐轮确认；改动全部走 dev 分支。
 
 ## 五、踩过的坑（绝对不要再踩）
 
@@ -69,7 +81,10 @@
 10. **结构改动唯一合法路径**：新增编号迁移文件（migrations/00X_xxx.sql）→ 过 verify。禁止 rename 表/列、禁止复用 id、禁止删列。`tests/integration/test_schema_contract.py` 把 22 表列名钉死，改名即 FAIL。
 11. **不要重跑已完成的上游阶段**；改代码后必跑 `PYTHONPATH=src python scripts/verify.py`（七步门禁），全 PASS 才算完。
 12. **GitHub 推送被拒（403 denied to QUEQUE0926）**= 令牌缺 Contents 权限或代理端口变了，先查这两样，别瞎重试。连续失败 2 次停手写 REVIEW_REQUEST.md。
-13. **REVIEW_REQUEST.md 是活文档**：2026-09-12 那条 403 阻塞已结案（✅ 段留在文件里），新阻塞追加新段，别删旧记录。
+13. **REVIEW_REQUEST.md 是活文档**：2026-09-12 那条 403 阻塞已结案（✅ 段留在文件里），新阻塞追加新段，别删旧记录。它还没进 git 存档，下次 dev 存档时一起 `git add`。
+14. **清空数据库 = 逐表 DELETE 业务数据，`schema_migrations` 表绝对不能清**（2026-09-12 血泪坑）：清了它库就"失忆"，下次导入会重放迁移，003 的 `ALTER TABLE ADD position` 报 duplicate column name: position。修复方式是把缺的 (version, name) 记录补回该表（名称对应 migrations/*.sql 文件名去掉编号前缀）。
+15. **本环境删除文件会被 genie-trash 安全机制拦截**（I 盘无回收站，fail-closed），且被占用的文件 mv 不动 → "清空/删除"优先用逐表 DELETE 或先 cp 备份；单次 git push 403 若令牌权限已修好，先重试一次再排查（代理偶发抖动）。
+16. **printf 写含 `\U`/`\f` 的 bat 会被转义吃掉** → 写 Windows bat 用 Write 工具，不用 shell printf。
 
 ## 六、验证方式速查
 
