@@ -18,6 +18,14 @@
 
 **第 1~3 步已完成并多轮测试验证：建档链 + 导入链 + Source/Segment。**
 
+### Git / GitHub 备份体系（2026-09-12 新建，用户亲自主导）
+- **本地 git 已 init**，首个存档点 `8914223`（52 文件，仅代码/文档/测试）。
+- **云端公开仓库**：https://github.com/QUEQUE0926/game-writing-system ，main 与 dev 双分支均已推送，本地/云端四处同步。
+- **分支规矩（用户拍板）**：main = 稳定主线，**需用户显式批准才可合并/更新**；dev = 日常工作分支。流程：改代码 → dev 上 commit + push → verify 全 PASS → 用户批准 → 并进 main。
+- **`.gitignore` 挡住数据**：`data/`、`backups/`、`exports/`、`logs/`、`__pycache__/`、`*.pyc`、`.workbuddy/` 一律不进 git——**公开仓库里只有代码，用户语料绝不公开**。用户选的是"数据另想办法备份"（B 方案），未做，别擅自改成数据入库。
+- **推送配置（本仓库级）**：代理 `http.proxy`/`https.proxy` = `http://127.0.0.1:7890`（端口随代理客户端重启可能变）；推送带 `GIT_TERMINAL_PROMPT=0`。仓库级署名 user.name=game-writing / user.email=local@backup。
+- **令牌坑**：用户 GitHub 令牌是 fine-grained PAT，能建仓库但默认无 Contents 权限 → push 403。已让用户在网页补 `Contents: Read and write` 解决。诊断手法：`GET /repos/<owner>/<repo>/contents/` 返回 404 = 令牌无内容权限。
+
 ### 架构（全部已落地、verify 全 PASS，约 41+ 测试）
 - **环境隔离**：`data/<dev|test|prod>/` 三套物理隔离 SQLite，各含 `app.db、raw/、inbox/、exports/、backups/、tmp/`。测试必须用 test 环境或临时目录（`GWS_RUNNING_TESTS=1` + `GWS_DATA_ROOT=$(mktemp -d)`），**禁止拿生产数据测试**。
 - **Schema**：22 张表。001 建 21 表 + 002 加 `game_aliases`（别名全库唯一）+ **003 加固**（games 两个 partial unique index 封独立游戏同名 NULL 漏洞、episode_segments 加 position 列）。当前 schema version = 3。
@@ -43,7 +51,9 @@
 
 ## 四、下一步计划（主线）
 
-**按 14_MVP_TASKS / 15_IMPLEMENTATION_ORDER，下一步是第 4 步：Speaker 分类** —— 把 segments 的 speaker 从 `unknown` 分类到 8 类（author / teammate / npc / ui / subtitle / game_audio / system / unknown，枚举已冻结在 AGENTS.md）。之后是第 5 步 Episode 切分。
+**按 14_MVP_TASKS / 15_IMPLEMENTATION_ORDER，下一步是第 4 步：Speaker 分类** —— 把 segments 的 speaker 从 `unknown` 分类到 8 类。**枚举以 AGENTS.md 唯一注册表为准：author / teammate / npc / ui / subtitle / game_audio / asr_error / unknown**（旧版交接文档里写的 "system" 是笔误，AGENTS.md 里没有这个值）。之后是第 5 步 Episode 切分。
+
+**用户已明确的流程要求**：第 4 步动手前先出方案、逐轮确认；改动全部走 dev 分支。
 
 ## 五、踩过的坑（绝对不要再踩）
 
@@ -58,6 +68,8 @@
 9. **枚举值唯一注册表**：status/speaker/content_type/ref_type 的合法值冻结在 AGENTS.md，禁止在代码里散落新写法。
 10. **结构改动唯一合法路径**：新增编号迁移文件（migrations/00X_xxx.sql）→ 过 verify。禁止 rename 表/列、禁止复用 id、禁止删列。`tests/integration/test_schema_contract.py` 把 22 表列名钉死，改名即 FAIL。
 11. **不要重跑已完成的上游阶段**；改代码后必跑 `PYTHONPATH=src python scripts/verify.py`（七步门禁），全 PASS 才算完。
+12. **GitHub 推送被拒（403 denied to QUEQUE0926）**= 令牌缺 Contents 权限或代理端口变了，先查这两样，别瞎重试。连续失败 2 次停手写 REVIEW_REQUEST.md。
+13. **REVIEW_REQUEST.md 是活文档**：2026-09-12 那条 403 阻塞已结案（✅ 段留在文件里），新阻塞追加新段，别删旧记录。
 
 ## 六、验证方式速查
 
@@ -76,3 +88,10 @@ GWS_ENV=test python scripts/gws.py ...   # 环境变量优先生效
 ```
 
 **每日工作日志**：`.workbuddy/memory/2026-09-11.md`、`2026-09-12.md`（有本轮全部细节）。工程纪律见 `02_ENGINEERING_RULES.md`，数据模型见 `03_DATA_MODEL.md`，AI 门规见 `AGENTS.md`。
+
+**本仓库 git 常用命令**（先 `git status` 确认当前在哪个分支再操作）：
+```bash
+GIT_TERMINAL_PROMPT=0 git push          # 推当前分支（代理已配）
+git add -A && git commit -m "说明"       # 存档点（在 dev 上打）
+# main 只在用户批准后合并：git checkout main && git merge dev && git push && git checkout dev
+```
