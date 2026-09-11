@@ -15,11 +15,13 @@ def fetch_tree(conn: sqlite3.Connection) -> list[dict]:
         """
         SELECT s.id AS sid, s.name AS sname, s.status AS sstatus,
                g.id AS gid, g.name AS gname, g.status AS gstatus,
-               v.id AS vid, v.name AS vname, v.status AS vstatus
+               v.id AS vid, v.name AS vname, v.status AS vstatus,
+               v.sort_key AS vsort, v.created_at AS vcreated
         FROM series s
         LEFT JOIN games g ON g.series_id = s.id
         LEFT JOIN game_versions v ON v.game_id = g.id
-        ORDER BY s.name, g.name, v.name
+        ORDER BY s.name, g.name,
+                 (v.sort_key IS NULL), v.sort_key, v.created_at, v.rowid
         """
     ).fetchall()
     tree: dict[tuple, dict] = {}
@@ -43,7 +45,7 @@ def fetch_tree(conn: sqlite3.Connection) -> list[dict]:
                 game["versions"][r["vid"]] = {
                     "id": r["vid"], "name": r["vname"],
                     "status": r["vstatus"], "sources": n_src,
-                    "segments": n_seg}
+                    "segments": n_seg, "sort_key": r["vsort"]}
     return list(tree.values())
 
 

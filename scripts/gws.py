@@ -154,6 +154,66 @@ def cmd_add_alias(env: str, game_id: str, alias: str) -> int:
         conn.close()
 
 
+def cmd_set_version_order(env: str, version: str, order: str) -> int:
+    """设置版本排序号（sort_key）：数字小的排前面，不填的排后面。
+
+    version 可以是版本 id 或版本名；版本名必须唯一命中，多命中报错不猜。
+    order 填数字；填 clear 表示清除排序号（回到按建档时间兜底）。
+    """
+    import json
+    from gws.ids import new_id
+
+    _, conn = _open(env)
+    try:
+        rows = conn.execute(
+            """SELECT v.id, v.name, v.sort_key, g.name AS gname, s.name AS sname
+               FROM game_versions v
+               JOIN games g ON g.id = v.game_id
+               JOIN series s ON s.id = g.series_id
+               WHERE v.status != 'trashed'""").fetchall()
+        hits = [r for r in rows if r["id"] == version]
+        if not hits:
+            hits = [r for r in rows if r["name"] == version]
+        if not hits:  # 退一步：id 前缀匹配，方便只敲前 8 位
+            hits = [r for r in rows if r["id"].startswith(version)]
+        if not hits:
+            print(f"没找到版本: {version}", file=sys.stderr)
+            return 2
+        if len(hits) > 1:
+            print(f"版本名[{version}]命中 {len(hits)} 条，请用 id 精确指定：",
+                  file=sys.stderr)
+            for r in hits:
+                print(f"  {r['sname']} → {r['gname']} → {r['name']}  id={r['id']}",
+                      file=sys.stderr)
+            return 2
+        target = hits[0]
+
+        if order == "clear":
+            new_key = None
+        else:
+            try:
+                new_key = int(order)
+            except ValueError:
+                print(f"排序号必须是整数或 clear，收到: {order}", file=sys.stderr)
+                return 2
+
+        old_key = target["sort_key"]
+        conn.execute("UPDATE game_versions SET sort_key=? WHERE id=?",
+                     (new_key, target["id"]))
+        conn.execute(
+            """INSERT INTO audit_log (id, event_name, entity_type, entity_id, detail)
+               VALUES (?, 'set_version_order', 'game_version', ?, ?)""",
+            (new_id(), target["id"],
+             json.dumps({"old": old_key, "new": new_key}, ensure_ascii=False)))
+        conn.commit()
+        cleared = "（已清除，回到按建档时间排序）" if new_key is None else ""
+        print(f"已设置: {target['sname']} → {target['gname']} → {target['name']} "
+              f"sort_key {old_key} → {new_key}{cleared}")
+        return 0
+    finally:
+        conn.close()
+
+
 def cmd_prepare(env: str, game: str, version: str | None,
                 series: str | None, open_folder: bool) -> int:
     """快速建档：按命名规则创建 inbox/auto/[系列/]游戏 - 版本/ 文件夹。"""
@@ -263,6 +323,9 @@ def main() -> int:
         p.add_argument("--name", required=True)
     p = add("add-alias"); p.add_argument("--game", required=True)
     p.add_argument("--alias", required=True)
+    p = add("set-version-order")
+    p.add_argument("version", help="版本 id 或版本名（须唯一命中）")
+    p.add_argument("order", help="排序数字，小的排前面；clear=清除")
     p = add("prepare")
     p.add_argument("--game", required=True)
     p.add_argument("--version", default=None)
@@ -301,6 +364,8 @@ def main() -> int:
                               args.id, args.name)
         if args.command == "add-alias":
             return cmd_add_alias(args.env, args.game, args.alias)
+        if args.command == "set-version-order":
+            return cmd_set_version_order(args.env, args.version, args.order)
         if args.command == "prepare":
             return cmd_prepare(args.env, args.game, args.version,
                                args.series, args.open)

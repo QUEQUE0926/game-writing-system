@@ -18,7 +18,8 @@ from gws.migrations import migrate  # noqa: E402
 EXPECTED_COLUMNS: dict[str, set[str]] = {
     "series": {"id", "name", "status", "created_at"},
     "games": {"id", "series_id", "name", "status", "created_at"},
-    "game_versions": {"id", "game_id", "name", "status", "created_at"},
+    "game_versions": {"id", "game_id", "name", "status", "created_at",
+                      "sort_key"},
     "sources": {"id", "version_id", "filename", "relative_path", "source_type",
                 "sha256", "encoding", "status", "imported_at"},
     "segments": {"id", "source_id", "ordinal", "line_start", "line_end",
