@@ -145,14 +145,6 @@ def render_card(no: int, c: dict, w: dict) -> list[str]:
            f"> 分项：{'、'.join(parts)}"]
     if c.get("use"):
         out.append(f"> 建议用途：{c['use']}")
-    out.append("> 联网策略："
-               + (c.get("web_strategy") or "条件联网（价值拓展按后续调度）"))
-    # AI辅助结论（联网）：每卡必有，明确区分外部信息与转录原文
-    out.append("> AI辅助结论（联网）："
-               + (c.get("ai_web") or c.get("web_check")
-                  or "无外部核验项——本卡信息全部来自转录原文（玩家口述）"))
-    if c.get("judge_reason"):
-        out.append(f"> 判断理由：{c['judge_reason']}")
     out.append("> 机会价值：待评估")
     out += ["", f"- **主题**：{c['subject']}",
             f"- **当时的细节**：{c['detail']}",
@@ -162,8 +154,17 @@ def render_card(no: int, c: dict, w: dict) -> list[str]:
         out.append(f"- **张力**：{c['tension']}")
         if c.get("tension_type"):
             out.append(f"- **张力类型**：{c['tension_type']}")
-    out += ["", boxes[0], boxes[1], "",
-            "<details>", "<summary><strong>证据与核对信息</strong></summary>",
+    out += ["", boxes[0], boxes[1], ""]
+    # AI辅助信息块（用户指定后置）：联网策略/AI辅助结论/判断理由
+    out += ["**AI辅助信息（联网）**", "",
+            f"- 联网策略："
+            + (c.get("web_strategy") or "条件联网（价值拓展按后续调度）"),
+            "- AI辅助结论（联网）："
+            + (c.get("ai_web") or c.get("web_check")
+               or "无外部核验项——本卡信息全部来自转录原文（玩家口述）")]
+    if c.get("judge_reason"):
+        out.append(f"- 判断理由：{c['judge_reason']}")
+    out += ["", "<details>", "<summary><strong>证据与核对信息</strong></summary>",
             "",
             f"> **证据位置**：{anchor}",
             f"> **玩家原话**：“{c['quote']}”", "",
@@ -177,7 +178,8 @@ def render_card(no: int, c: dict, w: dict) -> list[str]:
     return out
 
 
-def run_from_json(path: str, todo: list, out_dir: Path, today: str) -> None:
+def run_from_json(path: str, todo: list, out_dir: Path, today: str,
+                  cfg=None) -> None:
     """人工/AI 直接产卡模式：同一套逐字锁与渲染，只是卡由外部 JSON 提供。
 
     版式按规则16：文件头只有张数概览；完整卡片按 高/中/低 三个二级标题分组，
@@ -211,7 +213,7 @@ def run_from_json(path: str, todo: list, out_dir: Path, today: str) -> None:
                     k: w.get(k) for k in ("game", "episode_title",
                                           "line_start", "line_end")}})
 
-    # 稨定卡号：总分降序、同分按 玩家帮助→判断增量→独特性（规则16）
+    # 稳定卡号：总分降序、同分按 玩家帮助→判断增量→独特性（规则16）
     def dims(c):
         return (int(c.get("help", 0)), int(c.get("delta", 0)),
                 int(c.get("unique", 0)))
@@ -230,25 +232,62 @@ def run_from_json(path: str, todo: list, out_dir: Path, today: str) -> None:
     for n, it in enumerate(cards_out, 1):
         it["no"] = n
 
-    n_hi = sum(1 for it in cards_out if tier(it["card"]) == "高")
-    n_mid = sum(1 for it in cards_out if tier(it["card"]) == "中")
-    n_lo = sum(1 for it in cards_out if tier(it["card"]) == "低")
-    md = [f"# 素材卡草稿 · {datetime.date.today()}（待人工审核）", "",
-          f"> 产卡方式：AI 精读直出（--from-json），逐字锁校验；卡号=稳定ID",
-          f"> 概览：高价值 {n_hi} ｜ 中价值 {n_mid} ｜ 低价值 {n_lo}",
-          f"> AI辅助结论（联网）栏在每卡头部：标明哪些信息来自外部核验、"
-          f"哪些全部来自转录原文。", ""]
-    for sec, title in (("高", "◆ 高价值 ｜ 优先审核"),
-                       ("中", "◇ 中价值 ｜ 按需保留"),
-                       ("低", "· 低价值 ｜ 默认退出")):
-        group = [it for it in cards_out if tier(it["card"]) == sec]
-        if not group:
-            continue
-        md += [f"## {title}", ""]
-        for it in group:
-            md += render_card(it["no"], it["card"], it["window"])
-    (out_dir / f"卡片草稿-{today}.md").write_text("\n".join(md),
-                                                  encoding="utf-8")
+    # 版本名（窗口→episodes→game_versions），按 游戏+版本 出一份文件
+    from gws.db import connect
+    conn = connect(cfg)
+    try:
+        ver_map = {r["episode_id"]: r["ver"] for r in conn.execute(
+            "SELECT e.id AS episode_id, v.name AS ver FROM episodes e "
+            "JOIN game_versions v ON v.id = e.version_id")}
+    finally:
+        conn.close()
+    for it in cards_out:
+        it["ver"] = ver_map.get(it["window"]["episode_id"], "default")
+
+    sec_title = {"高": "◆ 高价值 ｜ 优先审核",
+                 "中": "◇ 中价值 ｜ 按需保留",
+                 "低": "· 低价值 ｜ 默认退出"}
+    by_gv: dict[tuple, list] = {}
+    for it in cards_out:
+        by_gv.setdefault((it["window"]["game"], it["ver"]), []).append(it)
+
+    written = []
+    for (game, ver), group in sorted(by_gv.items()):
+        n_hi = sum(1 for it in group if tier(it["card"]) == "高")
+        n_mid = sum(1 for it in group if tier(it["card"]) == "中")
+        n_lo = len(group) - n_hi - n_mid
+        md = [f"# 《{game}》素材卡草稿（{ver}）· {datetime.date.today()}"
+              f"（待人工审核）", "",
+              f"> 来源：素材卡管线（screen_windows → coarse_gate → 精读）。",
+              f"> 转录无时间戳，证据一律用「原文第X–Y行」行号锚点；"
+              f"卡号=稳定ID，只移动展示位置不重编号。",
+              f"> 每卡「AI辅助信息（联网）」块标明哪些信息来自外部核验、"
+              f"哪些全部来自转录原文。", "",
+              "## 先读我：什么是「张力」（10秒版）", "",
+              "- 张力 = 这条体验里最反直觉、最想争辩、或与预期相反的那一下。"
+              "没有张力的卡就是普通记录。",
+              "- 张力类型：反预期 ｜ 价值观冲突 ｜ 与常识相反 ｜ 自我反转"
+              "（标'反转:参见素材卡NN'）｜ 无张力。",
+              "- 本文件里没有「张力/张力类型」两行的卡 = 无张力卡，禁止硬凑。", "",
+              "## 现在只做这3件事", "",
+              "- [ ] 1.【必填】逐卡确认复选框：高价值默认采用、中价值默认"
+              "不勾、低价值默认删除（可覆盖；删除只退出成稿候选）",
+              "- [ ] 2.【必填】核对各卡「核对记录」里标'待人工'的 ASR 变体"
+              "与游戏内数值",
+              "- [ ] 3.【必填】把文末'提交状态'改成'已填写'", "",
+              f"## 价值概览", "",
+              f"高价值 {n_hi} ｜ 中价值 {n_mid} ｜ 低价值 {n_lo}", ""]
+        for sec in ("高", "中", "低"):
+            grp = [it for it in group if tier(it["card"]) == sec]
+            if not grp:
+                continue
+            md += [f"## {sec_title[sec]}", ""]
+            for it in grp:
+                md += render_card(it["no"], it["card"], it["window"])
+        md += ["---", "", "提交状态：（待填写）", ""]
+        fname = f"《{game}》素材卡草稿（{ver}）-{today}.md"
+        (out_dir / fname).write_text("\n".join(md), encoding="utf-8")
+        written.append(fname)
     if human_check:
         hc = [f"# human_check（待人工填写）· {datetime.date.today()}", ""]
         for n, item in enumerate(human_check, 1):
@@ -269,6 +308,8 @@ def run_from_json(path: str, todo: list, out_dir: Path, today: str) -> None:
                    ensure_ascii=False, indent=1), encoding="utf-8")
     print(f"=== 完成：合格卡 {len(cards_out)} 张，逐字锁拦下 "
           f"{len(human_check)} 条进 human_check")
+    for f in written:
+        print(f"产出：{out_dir / f}")
 
 
 def main() -> None:
@@ -296,7 +337,7 @@ def main() -> None:
     out_dir.mkdir(parents=True, exist_ok=True)
 
     if from_json:
-        run_from_json(from_json, todo, out_dir, today)
+        run_from_json(from_json, todo, out_dir, today, cfg)
         return
 
     cards_out = []      # 合格卡
