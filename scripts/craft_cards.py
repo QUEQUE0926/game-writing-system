@@ -230,17 +230,23 @@ def run_from_json(path: str, todo: list, out_dir: Path, today: str,
     for n, it in enumerate(cards_out, 1):
         it["no"] = n
 
-    # 版本名（窗口→episodes→game_versions），按 游戏+版本 出一份文件
+    # 版本名+系列名（窗口→episodes→game_versions→games→series），按 游戏+版本 出一份文件
     from gws.db import connect
     conn = connect(cfg)
     try:
-        ver_map = {r["episode_id"]: r["ver"] for r in conn.execute(
-            "SELECT e.id AS episode_id, v.name AS ver FROM episodes e "
-            "JOIN game_versions v ON v.id = e.version_id")}
+        ver_map = {r["episode_id"]: (r["series"], r["ver"])
+                   for r in conn.execute(
+            "SELECT e.id AS episode_id, v.name AS ver, "
+            "COALESCE(se.name, '—') AS series FROM episodes e "
+            "JOIN game_versions v ON v.id = e.version_id "
+            "JOIN games g ON g.id = v.game_id "
+            "LEFT JOIN series se ON se.id = g.series_id")}
     finally:
         conn.close()
     for it in cards_out:
-        it["ver"] = ver_map.get(it["window"]["episode_id"], "default")
+        series, ver = ver_map.get(it["window"]["episode_id"], ("—", "default"))
+        it["ver"] = ver
+        it["series"] = series
 
     sec_title = {"高": "◆ 高价值 ｜ 优先审核",
                  "中": "◇ 中价值 ｜ 按需保留",
@@ -251,11 +257,14 @@ def run_from_json(path: str, todo: list, out_dir: Path, today: str,
 
     written = []
     for (game, ver), group in sorted(by_gv.items()):
+        group_series = next((it["series"] for it in group
+                             if it.get("series")), "—")
         n_hi = sum(1 for it in group if tier(it["card"]) == "高")
         n_mid = sum(1 for it in group if tier(it["card"]) == "中")
         n_lo = len(group) - n_hi - n_mid
         md = [f"# 《{game}》素材卡草稿（{ver}）· {datetime.date.today()}"
               f"（待人工审核）", "",
+              f"> 系列：{group_series} ｜ 游戏：{game} ｜ 版本：{ver}",
               f"> 来源：素材卡管线（screen_windows → coarse_gate → 精读）。",
               f"> 转录无时间戳，证据一律用「原文第X–Y行」行号锚点；"
               f"卡号=稳定ID，只移动展示位置不重编号。",
@@ -300,8 +309,12 @@ def run_from_json(path: str, todo: list, out_dir: Path, today: str,
         hc_groups.setdefault((w["game"], w.get("ver", "default")),
                              []).append(("锁失败", item["card"], w, None))
     for (game, ver), entries in sorted(hc_groups.items()):
+        group_series = next((it["series"] for it in cards_out
+                             if it["window"]["game"] == game
+                             and it["ver"] == ver and it.get("series")), "—")
         hc = [f"# human_check（待人工填写）· {game}（{ver}）· "
               f"{datetime.date.today()}", "",
+              f"> 系列：{group_series} ｜ 游戏：{game} ｜ 版本：{ver}",
               "> AI 已预填「AI辅助结论（联网）」，人只填「人工结论」；"
               "填完本文件，对应卡片草稿才改名归档。", ""]
         for n, (kind, c, w, no) in enumerate(entries, 1):
