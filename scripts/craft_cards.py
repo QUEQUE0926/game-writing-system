@@ -120,18 +120,56 @@ def quote_ok(quote: str, window: dict) -> bool:
 def render_card(no: int, c: dict, w: dict) -> list[str]:
     anchor = (f"{w['game']} · {w['episode_title']} · "
               f"原文第 {w['line_start']}–{w['line_end']} 行")
-    out = [f"### 素材卡 {str(no).zfill(3)}｜待人工审核", ""]
-    out += [f"- **主题**：{c['subject']}",
+    # 五维打分（规则14/19）：0~3 × 5，高=11~15 中=7~10 低=0~6
+    dims = [("玩家帮助", int(c.get("help", 0))),
+            ("具体程度", int(c.get("concrete", 0))),
+            ("判断增量", int(c.get("delta", 0))),
+            ("独特性", int(c.get("unique", 0))),
+            ("成文能力", int(c.get("writing", 0)))]
+    total = sum(s for _, s in dims)
+    tier = "高" if total >= 11 else ("中" if total >= 7 else "低")
+    mx = max(s for _, s in dims)
+    parts = [f"**{n}({s})**" if s == mx else f"{n}({s})"
+             for _, n, s in sorted(((i, n, s) for i, (n, s) in
+                                    enumerate(dims)),
+                                   key=lambda t: (-t[2], t[0]))]
+    # 默认复选状态（规则17）：高=采用 低=删除 中=不勾
+    if tier == "高":
+        boxes = ["- [x] **采用**", "- [ ] 删除"]
+    elif tier == "低":
+        boxes = ["- [ ] 采用", "- [x] 删除"]
+    else:
+        boxes = ["- [ ] 采用", "- [ ] 删除"]
+    out = [f"### 素材卡 {str(no).zfill(3)}｜{total}分", "",
+           f"> 基础价值：{tier}（{total}/15）",
+           f"> 分项：{'、'.join(parts)}"]
+    if c.get("use"):
+        out.append(f"> 建议用途：{c['use']}")
+    out.append("> 联网策略："
+               + (c.get("web_strategy") or "条件联网（价值拓展按后续调度）"))
+    if c.get("judge_reason"):
+        out.append(f"> 判断理由：{c['judge_reason']}")
+    out.append("> 机会价值：待评估")
+    out += ["", f"- **主题**：{c['subject']}",
             f"- **当时的细节**：{c['detail']}",
             f"- **我的感受与判断**：{c['feeling']}",
             f"- **可以说明什么**：{c['analysis']}"]
     if c.get("tension"):
-        out += [f"- **张力**：{c['tension']}"]
+        out.append(f"- **张力**：{c['tension']}")
         if c.get("tension_type"):
-            out += [f"- **张力类型**：{c['tension_type']}"]
-    out += ["", f"> **证据位置**：{anchor}",
-            f"> **玩家原话**：“{c['quote']}”",
-            "", "- [ ] 采用", "- [ ] 删除", ""]
+            out.append(f"- **张力类型**：{c['tension_type']}")
+    out += ["", boxes[0], boxes[1], "",
+            "<details>", "<summary><strong>证据与核对信息</strong></summary>",
+            "",
+            f"> **证据位置**：{anchor}",
+            f"> **玩家原话**：“{c['quote']}”", "",
+            f"- **说话人**：{c.get('speaker', '玩家')}",
+            f"- **说话人置信度**：{c.get('speaker_conf', '高')}"]
+    if c.get("web_check"):
+        out.append(f"- **核对（联网）**：{c['web_check']}")
+    if c.get("web_log"):
+        out.append(f"- **核对记录**：{c['web_log']}")
+    out += ["", "</details>", ""]
     return out
 
 
