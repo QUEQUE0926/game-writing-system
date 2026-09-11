@@ -32,13 +32,58 @@ CUES = re.compile(
     r"(卧槽|我操|我去|我勒|离谱|服了|笑死|好家伙|绝了|抽象|牛逼|NB|恐怖如斯|"
     r"寄|吓死|麻了|炸了|逆天|变态|恶心|离大谱|什么鬼|不会吧|居然|竟然|"
     r"哈哈哈+|233+|笑尿|爽|舒服了)")
-TOP_PER_EPISODE = 3
-CONTEXT = 2  # 候选前后各带几句上下文
+
+# ── 第二遍：有料片段（分析/对比/叙事/总结）──
+# 特征词为主（不受断行影响）；文件内相对长度为辅（该源最长前10%行 +1 分）
+SUBJECT_CUES = {
+    "分析": re.compile(
+        r"其实|本质|原因是|相当于|类似于|问题在于|核心是|设计得|机制|逻辑上|"
+        r"讲究|原理|简单来说|说白了"),
+    "对比": re.compile(
+        r"不如|反而|前作|上一款|上一部|比之前|比原来|更像|有点像|很像|"
+        r"和.{0,8}一样|跟.{0,8}一样|差多了|比.{1,6}好"),
+    "叙事": re.compile(
+        r"伏笔|铺垫|原来|难怪|反转|剧情|主线|任务线|这段故事|背景设定"),
+    "总结": re.compile(
+        r"总的来说|总体来说|总体感觉|整体来说|玩下来|玩到现在|最大问题|"
+        r"最大亮点|最大的|节奏"),
+}
+CONTEXT = 2      # 候选前后各带几句上下文
+ANALYSIS_TOP = 3  # 每集有料片段提名数
+MERGE_GAP = 6     # 有料片段合并间隔
+TOP_PER_EPISODE = 3  # 每集每板块提名数
+
 
 
 def score(text: str) -> int:
-    hits = CUES.findall(text)
-    return len(hits)
+    return len(CUES.findall(text))
+
+
+def subject_score(text: str, len_threshold: int) -> tuple[int, list[str]]:
+    """返回 (得分, 命中类型列表)。特征词每类1分；文件内相对长行 +1。"""
+    kinds, pts = [], 0
+    for kind, pat in SUBJECT_CUES.items():
+        if pat.search(text):
+            kinds.append(kind)
+            pts += 1
+    if len_threshold and len(text) >= len_threshold:
+        pts += 1
+    return pts, kinds
+
+
+def _merge(hits: list, gap: int) -> list[list]:
+    """相邻命中合并（间隔<=gap 句）。"""
+    if not hits:
+        return []
+    groups, cur = [], [hits[0]]
+    for h in hits[1:]:
+        if h[0] - cur[-1][0] <= gap:
+            cur.append(h)
+        else:
+            groups.append(cur)
+            cur = [h]
+    groups.append(cur)
+    return groups
 
 
 def main() -> None:
@@ -53,13 +98,15 @@ def main() -> None:
             JOIN game_versions v ON v.id = e.version_id
             JOIN games g ON g.id = v.game_id
             ORDER BY g.name, e.title""").fetchall()
-        lines = ["# 素材卡候选瞬间提名报告",
+        lines = ["# 素材卡候选提名报告",
                  "",
                  f"> 生成时间：{datetime.date.today()}　环境：{cfg.env}",
+                 "> 两遍规则扫描：①高能瞬间（情绪词）；②有料片段"
+                 "（分析/对比/叙事/总结特征词 + 文件内相对长行）。",
                  "> 仅供作者挑选；挑中后按 05 提炼约定制卡"
                  "（subject=钩子坯 / quote=逐字原话 / 无判断不收卡）。",
                  ""]
-        total = 0
+        total_hi, total_sub = 0, 0
         for ep in episodes:
             segs = conn.execute("""
                 SELECT seg.id, seg.text, seg.speaker, seg.line_start
@@ -67,45 +114,77 @@ def main() -> None:
                 JOIN segments seg ON seg.id = es.segment_id
                 WHERE es.episode_id = ? ORDER BY es.position""",
                 (ep["id"],)).fetchall()
-            scored = [(i, s, score(s["text"])) for i, s in enumerate(segs)]
-            hits = [(i, s, k) for i, s, k in scored if k > 0
-                    and s["speaker"] in ("author", "teammate")]
-            if not hits:
+            usable = [s for s in segs
+                      if s["speaker"] in ("author", "teammate")]
+            if not usable:
                 continue
-            # 合并相邻命中成瞬间（间隔<=4句算同一瞬间），瞬间得分求和
-            moments = []
-            cur = [hits[0]]
-            for h in hits[1:]:
-                if h[0] - cur[-1][0] <= 4:
-                    cur.append(h)
-                else:
-                    moments.append(cur)
-                    cur = [h]
-            moments.append(cur)
-            moments.sort(key=lambda m: sum(k for _, _, k in m), reverse=True)
+
+            def emit(block_title: str, moments: list, rank_total: int):
+                nonlocal lines
+                out = []
+                for rank, m in enumerate(moments[:rank_total], start=1):
+                    i0 = max(m[0][0] - CONTEXT, 0)
+                    i1 = min(m[-1][0] + CONTEXT, len(segs) - 1)
+                    if block_title.startswith("高能"):
+                        kinds = "情绪"
+                    else:
+                        kinds = "+".join(m[0][3]) or "长句"
+                    out.append(
+                        f"### {block_title} {rank}"
+                        f"（{kinds}，强度 {m[0][2]}，"
+                        f"原文第 {segs[i0]['line_start']}–"
+                        f"{segs[i1]['line_start']} 行）")
+                    out.append("")
+                    for i in range(i0, i1 + 1):
+                        s = segs[i]
+                        who = {"author": "作者", "teammate": "队友"}.get(
+                            s["speaker"], s["speaker"])
+                        mark = " ←" if any(j[0] == i for j in m) else ""
+                        out.append(f"- [{who}] {s['text']}{mark}")
+                    out.append("")
+                return out
+
+            # ① 高能瞬间
+            usable_ids = {s["id"] for s in usable}
+            hits = [(i, s, score(s["text"]), ["情绪"]) for i, s in
+                    enumerate(segs) if s["id"] in usable_ids
+                    and score(s["text"]) > 0]
+            hi_groups = _merge(hits, 4) if hits else []
+            hi_groups.sort(key=lambda m: m[0][2], reverse=True)
+
+            # ② 有料片段（每集自身的内容行 p90 作为相对长行阈值）
+            content_lens = sorted(len(s["text"]) for s in usable)
+            p90 = content_lens[int(len(content_lens) * 0.9)] if content_lens else 0
+            shits = []
+            for i, s in enumerate(segs):
+                if s["speaker"] not in ("author", "teammate"):
+                    continue
+                pts, kinds = subject_score(s["text"], p90)
+                if pts > 0 and score(s["text"]) == 0:  # 不与高能瞬间重复
+                    shits.append((i, s, pts, kinds))
+            sub_groups = _merge(shits, MERGE_GAP) if shits else []
+            sub_groups.sort(key=lambda m: m[0][2], reverse=True)
+
+            if not hi_groups and not sub_groups:
+                continue
             lines.append(f"## {ep['game']} · {ep['title']}")
             lines.append("")
-            for rank, m in enumerate(moments[:top_n], start=1):
-                total += 1
-                i0, i1 = max(m[0][0] - CONTEXT, 0), \
-                    min(m[-1][0] + CONTEXT, len(segs) - 1)
-                lines.append(f"### 候选 {rank}（强度 "
-                             f"{sum(k for _, _, k in m)}，"
-                             f"原文第 {segs[i0]['line_start']}–"
-                             f"{segs[i1]['line_start']} 行）")
+            if hi_groups:
+                lines.append(f"### ◆ 高能瞬间（前 {top_n}）")
                 lines.append("")
-                for i in range(i0, i1 + 1):
-                    s = segs[i]
-                    who = {"author": "作者", "teammate": "队友"}.get(
-                        s["speaker"], s["speaker"])
-                    mark = " ←" if any(j == i for j, _, _ in m) else ""
-                    lines.append(f"- [{who}] {s['text']}{mark}")
+                lines += emit("高能", hi_groups, top_n)
+                total_hi += min(len(hi_groups), top_n)
+            if sub_groups:
+                lines.append(f"### ◇ 有料片段（前 {top_n}）")
                 lines.append("")
+                lines += emit("有料", sub_groups, top_n)
+                total_sub += min(len(sub_groups), top_n)
+
         out = cfg.exports_dir / \
             f"moment_candidates-{datetime.date.today():%Y%m%d}.md"
         out.parent.mkdir(parents=True, exist_ok=True)
         out.write_text("\n".join(lines), encoding="utf-8")
-        print(f"提名完成：{total} 个候选瞬间 → {out}")
+        print(f"提名完成：高能瞬间 {total_hi} + 有料片段 {total_sub} → {out}")
     finally:
         conn.close()
 
