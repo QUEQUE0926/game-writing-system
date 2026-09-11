@@ -89,12 +89,12 @@ def main() -> None:
               f" env={cfg.env}")
         for src in sources:
             done = conn.execute(
-                "SELECT COUNT(*) FROM episode_segments WHERE episode_id IN "
-                "(SELECT id FROM episodes WHERE version_id IN "
-                "(SELECT version_id FROM sources WHERE id=?))",
+                "SELECT COUNT(*) FROM episode_segments es "
+                "JOIN segments seg ON seg.id = es.segment_id "
+                "WHERE seg.source_id=?",
                 (src["id"],)).fetchone()[0]
             if done:
-                print(f"--- {src['game']}: 跳过（该版本已有 {done} 条集内记录）")
+                print(f"--- {src['game']}: 跳过（该源已有 {done} 条集内记录）")
                 continue
             segs = conn.execute("""
                 SELECT id, speaker, content_type FROM segments
