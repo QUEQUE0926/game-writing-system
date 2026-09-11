@@ -27,3 +27,24 @@ Repository permissions → **Contents: Read and write** → Update。
 ## ✅ 已解决（2026-09-12 00:37）
 用户补上令牌 Contents: Read and write 权限后，`git push -u origin main` 成功。
 本地 main 已跟踪 origin/main。以后改完代码 commit 后直接 `GIT_TERMINAL_PROMPT=0 git push` 即可（代理已配在本仓库）。
+
+---
+
+# 阻塞：代理端口失效，dev 推送被阻（2026-09-12 晚）
+
+## 现象
+- `git push` 连续失败：`Failed to connect to github.com:443 over proxy 127.0.0.1:7890`（重试 1 次仍失败）。
+- 7871/7920 端口试推也失败；清掉代理直连 GitHub 443 挂起（本网络必须走代理）。
+
+## 诊断（只读检查）
+- `netstat` 显示 **127.0.0.1:7890 已不在监听**（仓库 git 配置仍指向它）——代理客户端重启后端口变了（HANDOFF 坑12 预判过）。
+- 本机监听里有同进程（pid 49700）开的 7871/7920，疑似代理客户端新端口，但对 github.com:443 推送失败（可能是内部端口或协议不符）。
+
+## 已完成、不受影响的部分
+- 本地代码已 commit（8e88afc，screen_windows.py），数据安全，只是没推上云端。
+- 小批量试验全部完成，结论见工作日报/HANDOFF。
+
+## 待用户操作
+看一眼代理客户端（clash/v2ray 之类）当前的**混合/HTTP 端口**是多少，告诉 AI 改仓库配置：
+`git config http.proxy http://127.0.0.1:<新端口>` + `git config https.proxy http://127.0.0.1:<新端口>`，
+或者把代理客户端的端口改回 7890。改好后 `GIT_TERMINAL_PROMPT=0 git push` 即可。
