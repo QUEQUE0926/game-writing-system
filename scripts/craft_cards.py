@@ -149,7 +149,7 @@ def render_card(no: int, c: dict, w: dict) -> list[str]:
                + (c.get("web_strategy") or "条件联网（价值拓展按后续调度）"))
     # AI辅助结论（联网）：每卡必有，明确区分外部信息与转录原文
     out.append("> AI辅助结论（联网）："
-               + (c.get("ai_web")
+               + (c.get("ai_web") or c.get("web_check")
                   or "无外部核验项——本卡信息全部来自转录原文（玩家口述）"))
     if c.get("judge_reason"):
         out.append(f"> 判断理由：{c['judge_reason']}")
