@@ -37,7 +37,7 @@ UI_PATTERNS = [
 ]
 
 # 只分类 speaker 仍为 unknown 的段；不重跑已分类的（幂等 + 不覆盖人工修正）
-def classify(conn, apply: bool) -> dict:
+def classify(conn, apply: bool, only_prefix: str | None = None) -> dict:
     header_ids = set()
     sources = conn.execute("""
         SELECT s.id, g.name AS game, v.name AS ver, s.filename
@@ -54,6 +54,8 @@ def classify(conn, apply: bool) -> dict:
 
     report = []
     for src in sources:
+        if only_prefix and not src["id"].startswith(only_prefix):
+            continue
         segs = conn.execute("""
             SELECT id, text, speaker, content_type FROM segments
             WHERE source_id = ? ORDER BY ordinal""", (src["id"],)).fetchall()
@@ -136,10 +138,13 @@ def classify(conn, apply: bool) -> dict:
 
 def main() -> None:
     apply = "--apply" in sys.argv
+    only_prefix = None
+    if "--source" in sys.argv:  # 可选：只处理 id 前缀匹配的源
+        only_prefix = sys.argv[sys.argv.index("--source") + 1]
     cfg = load_config()
     conn = connect(cfg)
     try:
-        report = classify(conn, apply)
+        report = classify(conn, apply, only_prefix=only_prefix)
         action = "已写入" if apply else "试跑（未改库）"
         print(f"=== Speaker 分类报表（{action}）env={cfg.env} root={cfg.data_root}")
         for r in report:

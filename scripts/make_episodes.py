@@ -71,6 +71,9 @@ def plan_chunks(segs: list) -> list[list]:
 
 def main() -> None:
     apply = "--apply" in sys.argv
+    only_prefix = None
+    if "--source" in sys.argv:  # 可选：只处理 id 前缀匹配的源
+        only_prefix = sys.argv[sys.argv.index("--source") + 1]
     cfg = load_config()
     conn = connect(cfg)
     try:
@@ -80,6 +83,8 @@ def main() -> None:
             JOIN game_versions v ON v.id = s.version_id
             JOIN games g ON g.id = v.game_id
             ORDER BY g.name, s.filename""").fetchall()
+        if only_prefix:
+            sources = [s for s in sources if s["id"].startswith(only_prefix)]
         print(f"=== Episode 切集报表（{'已写入' if apply else '试跑，未改库'}）"
               f" env={cfg.env}")
         for src in sources:
