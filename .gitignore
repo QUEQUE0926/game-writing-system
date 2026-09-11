@@ -1,0 +1,17 @@
+# 数据不进 git（用户选择 B：数据另想办法备份）
+data/
+backups/
+exports/
+logs/
+drop-import-*.log
+
+# Python 临时文件
+__pycache__/
+*.pyc
+
+# AI 工作日志（本会话临时信息，不含需要存档的内容）
+.workbuddy/
+
+# 系统垃圾
+Thumbs.db
+desktop.ini
