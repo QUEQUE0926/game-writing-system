@@ -19,8 +19,13 @@
   要求 /api/generate 兼容（Ollama 口）；不兼容口后续再加适配。
 
 用法：
-  python scripts/craft_cards.py --limit 3    # 小批量测试
+  python scripts/craft_cards.py --limit 3    # 小批量测试（调 LLM）
   python scripts/craft_cards.py              # 全量精读名单
+  python scripts/craft_cards.py --from-json cards.json
+        # 人工/AI 直接产卡模式：cards.json = [{"window_line_start": 1,
+        #   "episode_title": "...", "cards":[{subject,detail,feeling,
+        #   analysis,tension?,tension_type?,quote}]}, ...]
+        # 同样过逐字锁与渲染（谁写卡都逃不掉程序锁）
 """
 from __future__ import annotations
 
@@ -130,10 +135,70 @@ def render_card(no: int, c: dict, w: dict) -> list[str]:
     return out
 
 
+def run_from_json(path: str, todo: list, out_dir: Path, today: str) -> None:
+    """人工/AI 直接产卡模式：同一套逐字锁与渲染，只是卡由外部 JSON 提供。"""
+    items = json.loads(Path(path).read_text(encoding="utf-8"))
+    by_key = {(w.get("source_id"), w["episode_title"], w["line_start"]): w for w in todo}
+    cards_out, human_check = [], []
+    no = 0
+    md = [f"# 素材卡草稿 · {datetime.date.today()}（待人工审核）", "",
+          f"> 产卡方式：AI 精读直出（--from-json），逐字锁校验",
+          f"> 输入窗口 {len(items)} 组", ""]
+    for item in items:
+        w = by_key.get((item.get("source_id"), item.get("episode_title"),
+                        item.get("window_line_start"))) or by_key.get(
+            (None, item.get("episode_title"), item.get("window_line_start")))
+        if not w:
+            print(f"! 找不到窗口 {item.get('episode_title')} "
+                  f"第{item.get('window_line_start')}行，跳过")
+            continue
+        md += [f"## {w['game']} · {w['episode_title']} · "
+               f"第 {w['line_start']}–{w['line_end']} 行"
+               f"（密度 {w.get('density')}）", ""]
+        seen = set()
+        for c in item.get("cards", []):
+            qn = norm(c.get("quote", ""))
+            if not qn or qn in seen:
+                continue
+            seen.add(qn)
+            if quote_ok(c.get("quote", ""), w):
+                no += 1
+                md += render_card(no, c, w)
+                cards_out.append({"card": c, "window": {
+                    k: w.get(k) for k in (
+                        "game", "episode_id", "episode_title", "source_id",
+                        "line_start", "line_end", "density", "score")}})
+            else:
+                human_check.append({"card": c, "window": {
+                    k: w.get(k) for k in ("game", "episode_title",
+                                          "line_start", "line_end")}})
+    (out_dir / f"卡片草稿-{today}.md").write_text("\n".join(md),
+                                                  encoding="utf-8")
+    if human_check:
+        hc = [f"# human_check（待人工填写）· {datetime.date.today()}", ""]
+        for n, item in enumerate(human_check, 1):
+            c = item["card"]
+            hc += [f"## 条目 {str(n).zfill(2)}",
+                   f"- 窗口：{item['window']['game']} · "
+                   f"{item['window']['episode_title']}",
+                   f"- 模型给的原话：「{c.get('quote', '')}」（未逐字命中）",
+                   f"- 主题线索：{c.get('subject', '')}", ""]
+        (out_dir / f"human_check-{today}.md").write_text(
+            "\n".join(hc), encoding="utf-8")
+    (out_dir / f"cards-state-{today}.json").write_text(
+        json.dumps({"cards": cards_out, "human_check": human_check},
+                   ensure_ascii=False, indent=1), encoding="utf-8")
+    print(f"=== 完成：合格卡 {len(cards_out)} 张，逐字锁拦下 "
+          f"{len(human_check)} 条进 human_check")
+
+
 def main() -> None:
     limit = None
+    from_json = None
     if "--limit" in sys.argv:
         limit = int(sys.argv[sys.argv.index("--limit") + 1])
+    if "--from-json" in sys.argv:
+        from_json = sys.argv[sys.argv.index("--from-json") + 1]
     cfg = load_config()
     screen_dir = cfg.exports_dir / "screening"
     files = sorted(screen_dir.glob("readlist-*.jsonl"))
@@ -150,6 +215,10 @@ def main() -> None:
     today = f"{datetime.date.today():%Y%m%d}"
     out_dir = cfg.exports_dir / "cards"
     out_dir.mkdir(parents=True, exist_ok=True)
+
+    if from_json:
+        run_from_json(from_json, todo, out_dir, today)
+        return
 
     cards_out = []      # 合格卡
     human_check = []    # 逐字锁不过的
