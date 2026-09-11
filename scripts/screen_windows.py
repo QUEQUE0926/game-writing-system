@@ -49,22 +49,20 @@ CUES_LEARN = re.compile(
     r"窍门|方法就是|技巧)")
 CUES_FAIL = re.compile(
     r"(又死了|卡关|过不去|翻车|失误|打不过|输了|失败|白给|白干|亏了|踩坑)")
-CUES_REV = re.compile(
-    r"(真香|打脸|我之前说|之前还说|我错了|收回|推翻|现在觉得|当时觉得|"
-    r"改观|路人转粉|粉转|以前觉得|一开始觉得.{0,20}(但|现在))")
 JUDGE_CUES = re.compile(
     r"(优化|掉帧|卡顿|帧数|手感|判定|打击感|建模|画质|配乐|音效|配音|"
     r"剧情|关卡|难度|数值|平衡|操作|镜头|视角|翻译|本地化|引导|教程|"
     r"地图|界面|UI|性价比|体量|节奏|氛围|创意|玩法|设计|内容量|肝|氪)")
 NUM_RE = re.compile(r"\d+(\.\d+)?%|\d+(\.\d+)?\s*(小时|分钟|块钱|元|GB|g)")
 # 单句每类计分上限（防一段排比刷分）
+# 注：反转(opinion_change)是跨句现象，单句正则实测 0 命中，已撤——
+# 反转留给同集配对算法（后续 coarse/精读层做）。
 WEIGHTS = {"pos": (CUES_POS, 1, 2), "neg": (CUES_NEG, 1, 2),
            "sur": (CUES_SUR, 2, 4), "conf": (CUES_CONF, 1, 2),
            "learn": (CUES_LEARN, 2, 4), "fail": (CUES_FAIL, 1, 2),
-           "rev": (CUES_REV, 3, 6), "judge": (JUDGE_CUES, 2, 4),
-           "num": (NUM_RE, 1, 1)}
+           "judge": (JUDGE_CUES, 2, 4), "num": (NUM_RE, 1, 1)}
 KIND_CN = {"pos": "好评", "neg": "差评", "sur": "惊讶", "conf": "困惑",
-           "learn": "学会", "fail": "失败", "rev": "反转", "judge": "判断",
+           "learn": "学会", "fail": "失败", "judge": "判断",
            "num": "细节"}
 MERGE_GAP = 6          # 命中间隔 ≤6 句并入同窗口
 MERGE_NEARBY = 10      # 相邻窗口间隔 ≤10 句再合并（观点反转常隔几分钟）
@@ -198,6 +196,16 @@ def main() -> None:
                         continue
                     wkinds = sorted({k for h in g for k in h[2]},
                                     key=lambda k: -WEIGHTS[k][1])
+                    # 密度分：每类每窗口最多计 2 次（消惊讶刷分），
+                    # 再除以句数×10（消"话多红利"，r=0.68 的病根）
+                    kind_cnt: dict[str, int] = {}
+                    for h in g:
+                        for k in h[2]:
+                            kind_cnt[k] = kind_cnt.get(k, 0) + 1
+                    capped = sum(min(c, 2) * WEIGHTS[k][1]
+                                 for k, c in kind_cnt.items())
+                    n_sents = hi - lo
+                    density = round(capped / n_sents * 10, 2)
                     w = {
                         "game": src["game"], "episode_id": ep_id,
                         "episode_title": ep_title,
@@ -207,6 +215,8 @@ def main() -> None:
                         "line_start": sl[lo]["line_start"],
                         "line_end": sl[hi - 1]["line_end"],
                         "score": wscore,
+                        "score_capped": capped,
+                        "density": density,
                         "hit_kinds": wkinds,
                         "hit_reason": "、".join(
                             f"{KIND_CN[k]}x{sum(h[2].count(k) for h in g)}"
@@ -221,9 +231,9 @@ def main() -> None:
                     windows_out.append(w)
                     by_game.setdefault(src["game"], []).append(w)
 
-        # 每游戏内部相对分档
+        # 每游戏内部相对分档：排序用密度分（入围门槛仍是原始总分）
         for game, lst in by_game.items():
-            lst.sort(key=lambda w: -w["score"])
+            lst.sort(key=lambda w: -w["density"])
             n_hi = max(1, -(-len(lst) * 3 // 10))
             n_mid = -(-len(lst) * 3 // 10)
             by_game[game] = (lst[:n_hi], lst[n_hi:n_hi + n_mid],
@@ -256,8 +266,8 @@ def main() -> None:
                 use = "、".join(USE_HINT.get(k, "待定")
                                 for k in w["hit_kinds"])
                 if detail:
-                    out.append(f"### 窗口 {str(n).zfill(3)}｜{w['score']} 分"
-                               f"｜{w['hit_reason']}")
+                    out.append(f"### 窗口 {str(n).zfill(3)}｜密度 {w['density']}"
+                               f"（总分 {w['score']}）｜{w['hit_reason']}")
                     out.append("")
                     for q in quote(w):
                         out.append(f"> {q}")
@@ -271,7 +281,7 @@ def main() -> None:
                     q = quote(w, 1)[0]
                     if len(q) > 70:
                         q = q[:67] + "…"
-                    out.append(f"- 窗口 {str(n).zfill(3)}｜{w['score']}分"
+                    out.append(f"- 窗口 {str(n).zfill(3)}｜密度{w['density']}"
                                f"｜{w['hit_reason']}｜{q}"
                                f"｜{w['episode_title']} 第{w['line_start']}行")
             return out

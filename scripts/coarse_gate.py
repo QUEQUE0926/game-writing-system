@@ -134,7 +134,7 @@ def main() -> None:
         by_game.setdefault(w["game"], []).append(w)
     top30: set[int] = set()
     for game, lst in by_game.items():
-        lst.sort(key=lambda w: -w["score"])
+        lst.sort(key=lambda w: -w.get("density", w["score"]))
         k = max(1, -(-len(lst) * 3 // 10))
         top30.update(id(w) for w in lst[:k])
 
@@ -176,7 +176,8 @@ def main() -> None:
     keep = [(w, j) for w, j in results if j["verdict"] == "KEEP"]
     maybe = [(w, j) for w, j in results if j["verdict"] == "MAYBE"]
     drop = [(w, j) for w, j in results if j["verdict"] in ("DROP", "ERROR")]
-    keep.sort(key=lambda t: (-t[1]["importance"], -t[0]["score"]))
+    keep.sort(key=lambda t: (-t[1]["importance"],
+                             -t[0].get("density", t[0]["score"])))
 
     readlist = out_dir = None
     if keep or maybe:
