@@ -35,6 +35,10 @@
 - **speaker**: author / teammate / npc / ui / subtitle / game_audio / unrelated_chat / asr_error / unknown
 - **content_type**: dialogue / narration / ui_text / noise / other
 - **cross_reference ref_type**: similar_to / contrasts / supports / supported_by / extends / contradicts / related_to / inspired_by
+- **sources.source_type**: merged_txt / single_txt
+- **tags.category**: mechanic / experience / analysis / writing_use / custom
+- **asset_type**（asset_tags / project_assets / usage_records / cross_references 的 from_type / to_type）: material_card / inspiration_card
+- **usage_records.consumer_type**: project / article
 
 ## 遇到拿不准的事
 
