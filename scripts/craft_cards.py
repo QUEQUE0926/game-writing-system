@@ -182,7 +182,8 @@ def render_card(no: int, c: dict, w: dict) -> list[str]:
     if c.get("web_check"):
         out.append(f"- **核对（联网）**：{c['web_check']}")
     if c.get("web_log"):
-        out.append(f"- **核对记录**：{c['web_log']}")
+        out.append("- **核对记录**："
+                   + re.sub(r"^待人工[:：]\s*", "", c["web_log"]))
     out += [f"- **说话人**：{c.get('speaker', '玩家')}",
             f"- **说话人置信度**：{c.get('speaker_conf', '高')}",
             "", "</details>", ""]
@@ -464,13 +465,14 @@ def run_from_json(path: str, todo: list, out_dir: Path, today: str,
               "填完本文件，对应卡片草稿才改名归档。", ""]
         for n, (kind, c, w, no) in enumerate(entries, 1):
             ctx = find_context(todo, w, c.get("quote", ""))
+            wl = re.sub(r"^待人工[:：]\s*", "", c.get("web_log", ""))
             if kind == "待人工":
                 hc += [f"## 条目 {str(n).zfill(2)}",
                        f"- 窗口：{game} · {w['episode_title']}"
                        f"（素材卡 {str(no).zfill(3)}）",
                        f"- 主题线索：{c.get('subject', '')}",
                        f"- 卡内原话：「{c.get('quote', '')}」",
-                       f"- 待人工核对：{c['web_log']}"]
+                       f"- 待人工核对：{wl}"]
                 if ctx:
                     hc += [f"- 原文上下文（原话所在句前后各2句，"
                            f"[ ]内为原文行号）："] + ctx
