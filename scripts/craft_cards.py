@@ -118,7 +118,8 @@ def quote_ok(quote: str, window: dict) -> bool:
 
 
 def render_card(no: int, c: dict, w: dict) -> list[str]:
-    anchor = (f"{w['game']} · {w['episode_title']} · "
+    ver_tag = f"（{w['ver']}）" if w.get("ver") else ""
+    anchor = (f"{w['game']}{ver_tag} · {w['episode_title']} · "
               f"原文第 {w['line_start']}–{w['line_end']} 行")
     # 五维打分（规则14/19）：0~3 × 5，高=11~15 中=7~10 低=0~6
     dims = [("玩家帮助", int(c.get("help", 0))),
@@ -149,6 +150,9 @@ def render_card(no: int, c: dict, w: dict) -> list[str]:
                + (c.get("web_strategy") or "条件联网（价值拓展按后续调度）"))
     if c.get("judge_reason"):
         out.append(f"> 判断理由：{c['judge_reason']}")
+    for rel_no, rel_subject, rel_ver in c.get("_rel", []):
+        out.append(f"> 相关联卡：素材卡 {str(rel_no).zfill(3)}《{rel_subject}》"
+                   f"（{rel_ver}）")
     out.append("> 机会价值：待评估")
     out += ["", f"- **主题**：{c['subject']}",
             f"- **当时的细节**：{c['detail']}",
@@ -204,8 +208,9 @@ def run_from_json(path: str, todo: list, out_dir: Path, today: str,
             if quote_ok(c.get("quote", ""), w):
                 cards_out.append({"card": c, "window": {
                     k: w.get(k) for k in (
-                        "game", "episode_id", "episode_title", "source_id",
-                        "line_start", "line_end", "density", "score")}})
+                        "game", "ver", "episode_id", "episode_title",
+                        "source_id", "line_start", "line_end",
+                        "density", "score")}})
             else:
                 human_check.append({"card": c, "window": {
                     k: w.get(k) for k in ("game", "ver", "episode_title",
@@ -247,6 +252,22 @@ def run_from_json(path: str, todo: list, out_dir: Path, today: str,
         series, ver = ver_map.get(it["window"]["episode_id"], ("—", "default"))
         it["ver"] = ver
         it["series"] = series
+
+    # 跨卡双向引用：卡的 related=[对方主题文本]，解析成卡号后两边都挂链接
+    subj_map = {it["card"]["subject"]: (it["no"], it["ver"])
+                for it in cards_out}
+    for it in cards_out:
+        for subj in it["card"].get("related", []):
+            tgt = subj_map.get(subj)
+            if not tgt or tgt[0] == it["no"]:
+                continue
+            rels = it["card"].setdefault("_rel", [])
+            if (tgt[0], subj, tgt[1]) not in rels:
+                rels.append((tgt[0], subj, tgt[1]))
+            back = cards_out[tgt[0] - 1]["card"].setdefault("_rel", [])
+            entry = (it["no"], it["card"]["subject"], it["ver"])
+            if entry not in back:
+                back.append(entry)
 
     sec_title = {"高": "◆ 高价值 ｜ 优先审核",
                  "中": "◇ 中价值 ｜ 按需保留",
