@@ -244,9 +244,6 @@ def main() -> None:
 
         out_dir = cfg.exports_dir / "nominations"
         out_dir.mkdir(parents=True, exist_ok=True)
-        # 同步一份到仓库根 exports/nominations/（方便不进 data 目录直接翻）
-        mirror_dir = Path(__file__).resolve().parents[1] / "exports" / "nominations"
-        mirror_dir.mkdir(parents=True, exist_ok=True)
         today = f"{datetime.date.today():%Y%m%d}"
 
         index = ["# 素材卡候选提名 · 总索引", "",
@@ -294,13 +291,9 @@ def main() -> None:
                 else ["（本轮无）", ""]
             (out_dir / f"{game}-{today}.md").write_text(
                 "\n".join(md), encoding="utf-8")
-            (mirror_dir / f"{game}-{today}.md").write_text(
-                "\n".join(md), encoding="utf-8")
 
         index_path = out_dir / f"索引-{today}.md"
         index_path.write_text("\n".join(index), encoding="utf-8")
-        (mirror_dir / f"索引-{today}.md").write_text(
-            "\n".join(index), encoding="utf-8")
         print(f"提名完成：{len(by_game)} 个游戏，高 {total_hi} / 中 "
               f"{total_mid} / 低 {len(candidates) - total_hi - total_mid}"
               f" → {index_path}")
