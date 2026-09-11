@@ -67,8 +67,9 @@ KIND_CN = {"pos": "好评", "neg": "差评", "sur": "惊讶", "conf": "困惑",
            "learn": "学会", "fail": "失败", "rev": "反转", "judge": "判断",
            "num": "细节"}
 MERGE_GAP = 6          # 命中间隔 ≤6 句并入同窗口
-CONTEXT = 5            # 窗口两侧各扩 5 句上下文
-MAX_WINDOW = 40        # 窗口最大句数，超出截断
+MERGE_NEARBY = 10      # 相邻窗口间隔 ≤10 句再合并（观点反转常隔几分钟）
+CONTEXT = 20           # 窗口两侧各扩 20 句邻域（上下文恢复：反转跨句不丢）
+MAX_WINDOW = 80        # 单窗口最大句数（合并+邻域后的上限参考）
 MIN_SCORE = 3          # 窗口入围最低分
 EP_EDGE_BONUS = 1      # 命中句落在集头/集尾 10 句内的加分
 USE_HINT = {
@@ -121,7 +122,16 @@ def merge_windows(hits: list, n_segs: int) -> list[list]:
                 cur.append(h)
         windows.append((cur, max(0, cur[0][0] - CONTEXT),
                         min(n_segs, cur[-1][0] + CONTEXT + 1)))
-    return windows
+    # 相邻窗口近距合并：观点弧线（如"不行→等等→原来很强"）不被切开
+    windows.sort(key=lambda t: t[1])
+    merged = [windows[0]]
+    for g, lo, hi in windows[1:]:
+        pg, plo, phi = merged[-1]
+        if lo - phi <= MERGE_NEARBY:
+            merged[-1] = (pg + g, plo, max(phi, hi))
+        else:
+            merged.append((g, lo, hi))
+    return merged
 
 
 def main() -> None:
