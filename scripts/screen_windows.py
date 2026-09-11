@@ -153,7 +153,6 @@ def main() -> None:
             sources = [s for s in sources if s["sid"].startswith(source_filter)]
 
         windows_out = []   # JSONL 行
-        by_game: dict[str, list] = {}
         for src in sources:
             segs = conn.execute("""
                 SELECT id, ordinal, line_start, line_end, speaker,
@@ -207,7 +206,8 @@ def main() -> None:
                     n_sents = hi - lo
                     density = round(capped / n_sents * 10, 2)
                     w = {
-                        "game": src["game"], "episode_id": ep_id,
+                        "game": src["game"], "ver": src["ver"],
+                        "episode_id": ep_id,
                         "episode_title": ep_title,
                         "source_id": src["sid"],
                         "ord_start": sl[lo]["ordinal"],
@@ -229,15 +229,17 @@ def main() -> None:
                     }
                     w["_hits"] = list(g)  # 命中明细（报告引文用，不进 JSONL）
                     windows_out.append(w)
-                    by_game.setdefault(src["game"], []).append(w)
 
-        # 每游戏内部相对分档：排序用密度分（入围门槛仍是原始总分）
-        for game, lst in by_game.items():
+        # 每游戏+版本一份工作台：组内相对分档（排序用密度分，入围门槛仍是原始总分）
+        by_gv: dict[tuple, list] = {}
+        for w in windows_out:
+            by_gv.setdefault((w["game"], w["ver"]), []).append(w)
+        for gv, lst in by_gv.items():
             lst.sort(key=lambda w: -w["density"])
             n_hi = max(1, -(-len(lst) * 3 // 10))
             n_mid = -(-len(lst) * 3 // 10)
-            by_game[game] = (lst[:n_hi], lst[n_hi:n_hi + n_mid],
-                             lst[n_hi + n_mid:])
+            by_gv[gv] = (lst[:n_hi], lst[n_hi:n_hi + n_mid],
+                         lst[n_hi + n_mid:])
 
         out_dir = cfg.exports_dir / "screening"
         out_dir.mkdir(parents=True, exist_ok=True)
@@ -290,20 +292,22 @@ def main() -> None:
                  f"> 生成时间：{datetime.date.today()}　环境：{cfg.env}"
                  f"　窗口总数：{len(windows_out)}",
                  f"> AI 精读输入：{jsonl_path}",
-                 "> 每游戏一份工作台，分档=该游戏内部相对分；"
+                 "> 每游戏+版本一份工作台，分档=该版本内部相对分；"
                  "窗口=命中句±5句上下文，直接可喂精读模型。", "",
-                 "| 游戏 | 高 | 中 | 低 | 最高分 |", "|---|---|---|---|---|"]
-        for game in sorted(by_game):
-            hi, mid, lo = by_game[game]
+                 "| 游戏 | 版本 | 高 | 中 | 低 | 最高分 |",
+                 "|---|---|---|---|---|---|"]
+        for game, ver in sorted(by_gv):
+            hi, mid, lo = by_gv[(game, ver)]
             preview = quote(hi[0], 1)[0] if hi else ""
             if len(preview) > 36:
                 preview = preview[:33] + "…"
-            index.append(f"| [{game}]({game}-{today}.md) | {len(hi)} | "
+            fname = f"{game}-{ver}-筛选-{today}.md"
+            index.append(f"| {game} | [{ver}]({fname}) | {len(hi)} | "
                          f"{len(mid)} | {len(lo)} | {preview} |")
 
-        for game in sorted(by_game):
-            hi, mid, lo = by_game[game]
-            md = [f"# {game} · 精读入围工作台", "",
+        for game, ver in sorted(by_gv):
+            hi, mid, lo = by_gv[(game, ver)]
+            md = [f"# {game}（{ver}）· 精读入围工作台", "",
                   f"> 高 {len(hi)}（前 {min(len(hi), HI_CAP)} 窗详情，"
                   f"其余备查）/ 中 {len(mid)} / 低 {len(lo)}", "",
                   "## ◆ 高分窗口 ｜ 优先精读", ""]
@@ -316,12 +320,12 @@ def main() -> None:
             md += ["## · 低分窗口 ｜ 备查", ""]
             md += render(len(hi) + len(mid), lo, False) if lo \
                 else ["（本轮无）", ""]
-            (out_dir / f"{game}-{today}.md").write_text(
+            (out_dir / f"{game}-{ver}-筛选-{today}.md").write_text(
                 "\n".join(md), encoding="utf-8")
 
         index_path = out_dir / f"索引-{today}.md"
         index_path.write_text("\n".join(index), encoding="utf-8")
-        print(f"筛选完成：{len(by_game)} 个游戏，窗口 {len(windows_out)} 个"
+        print(f"筛选完成：{len(by_gv)} 个游戏+版本，窗口 {len(windows_out)} 个"
               f"（入围门槛 {MIN_SCORE} 分）")
         print(f"报告：{index_path}")
         print(f"JSONL：{jsonl_path}")

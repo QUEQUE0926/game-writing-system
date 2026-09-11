@@ -12,7 +12,7 @@
 输出：
 - gate-state.json（累计判定状态，断点续跑依据）；
 - 精读名单 readlist-<日期>.jsonl（KEEP+复议回岗窗口，按重要度×密度排序）；
-- 每游戏粗判工作台 <游戏>-粗判-<日期>.md + 总索引。
+- 每游戏+版本粗判工作台 <游戏>-<版本>-粗判-<日期>.md + 总索引。
 
 用法：
   python scripts/coarse_gate.py                 # 处理最新 windows jsonl 全部
@@ -190,25 +190,28 @@ def main() -> None:
                                  "confidence", "reason") if k in j}
                 f.write(json.dumps(slim, ensure_ascii=False) + "\n")
 
-    # 每游戏工作台
+    # 每游戏+版本工作台
     out_dir = screen_dir
-    by_g: dict[str, list] = {}
+    by_gv: dict[tuple, list] = {}
     for w, j in results:
-        by_g.setdefault(w["game"], []).append((w, j))
+        by_gv.setdefault((w["game"], w.get("ver", "default")),
+                         []).append((w, j))
     index = ["# 粗判门控 · 总索引", "",
              f"> 生成时间：{datetime.date.today()}　窗口 {len(results)} 个："
              f"KEEP {len(keep)} / MAYBE {len(maybe)} / DROP或失败 {len(drop)}"
              f"（复议改判 {sum(1 for _, j in results if j.get('reviewed'))}）",
              f"> 精读名单：{readlist}", "",
-             "| 游戏 | KEEP | MAYBE | DROP |", "|---|---|---|---|"]
-    for game in sorted(by_g):
-        lst = by_g[game]
+             "| 游戏 | 版本 | KEEP | MAYBE | DROP |",
+             "|---|---|---|---|---|"]
+    for game, ver in sorted(by_gv):
+        lst = by_gv[(game, ver)]
         k = sum(1 for _, j in lst if j["verdict"] == "KEEP")
         m = sum(1 for _, j in lst if j["verdict"] == "MAYBE")
         d = len(lst) - k - m
-        index.append(f"| [{game}]({game}-粗判-{today}.md) | {k} | {m} | {d} |")
+        fname = f"{game}-{ver}-粗判-{today}.md"
+        index.append(f"| {game} | [{ver}]({fname}) | {k} | {m} | {d} |")
 
-        md = [f"# {game} · 粗判工作台", "",
+        md = [f"# {game}（{ver}）· 粗判工作台", "",
               f"> KEEP（优先精读）/ MAYBE（次级批处理）/ DROP（备查）", "",
               "## ◆ KEEP ｜ 优先精读", ""]
         for w, j in lst:
@@ -233,7 +236,7 @@ def main() -> None:
                 continue
             md.append(f"- {w['episode_title']} 第{w['line_start']}行"
                       f"｜{j['reason'][:40]}")
-        (out_dir / f"{game}-粗判-{today}.md").write_text(
+        (out_dir / f"{game}-{ver}-粗判-{today}.md").write_text(
             "\n".join(md), encoding="utf-8")
 
     index_path = out_dir / f"粗判索引-{today}.md"

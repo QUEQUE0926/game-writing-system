@@ -208,7 +208,7 @@ def run_from_json(path: str, todo: list, out_dir: Path, today: str,
                         "line_start", "line_end", "density", "score")}})
             else:
                 human_check.append({"card": c, "window": {
-                    k: w.get(k) for k in ("game", "episode_title",
+                    k: w.get(k) for k in ("game", "ver", "episode_title",
                                           "line_start", "line_end")}})
 
     # 稳定卡号：总分降序、同分按 玩家帮助→判断增量→独特性（规则16）
@@ -286,42 +286,51 @@ def run_from_json(path: str, todo: list, out_dir: Path, today: str,
         fname = f"《{game}》素材卡草稿（{ver}）-{today}.md"
         (out_dir / fname).write_text("\n".join(md), encoding="utf-8")
         written.append(fname)
-    # human_check（规则9/13）：逐字锁失败 + 各卡"待人工"核对项，每轮全量重写
-    hc = [f"# human_check（待人工填写）· {datetime.date.today()}", "",
-          "> AI 已预填「AI辅助结论（联网）」，人只填「人工结论」；"
-          "填完本文件，卡片才改名归档。", ""]
-    n_hc = 0
+    # human_check（规则9/13）：逐字锁失败 + 各卡"待人工"核对项，每轮全量重写；
+    # 按游戏+版本各一份，与卡片草稿文件一一对应
+    hc_groups: dict[tuple, list] = {}
     for it in cards_out:
         c = it["card"]
         if not c.get("web_log"):
             continue
-        n_hc += 1
-        hc += [f"## 条目 {str(n_hc).zfill(2)}",
-               f"- 窗口：{it['window']['game']} · "
-               f"{it['window']['episode_title']}"
-               f"（素材卡 {str(it['no']).zfill(3)}）",
-               f"- 主题线索：{c.get('subject', '')}",
-               f"- 待人工核对：{c['web_log']}",
-               "- AI辅助结论（联网）："
-               + (c.get("ai_web") or c.get("web_check")
-                  or "无外部可核信息，以游戏画面/人工记忆为准"),
-               "- 人工结论：（待填写）", ""]
+        hc_groups.setdefault((it["window"]["game"], it["ver"]), []).append(
+            ("待人工", it["card"], it["window"], it["no"]))
     for item in human_check:
-        c = item["card"]
-        n_hc += 1
-        hc += [f"## 条目 {str(n_hc).zfill(2)}",
-               f"- 窗口：{item['window']['game']} · "
-               f"{item['window']['episode_title']}",
-               f"- 模型给的原话：「{c.get('quote', '')}」（未逐字命中）",
-               f"- 主题线索：{c.get('subject', '')}",
-               "- AI辅助结论（联网）："
-               + (c.get("ai_web")
-                  or "无外部核验项（未通过逐字锁，优先回查原文）"),
-               "- 人工结论：（待填写）", ""]
-    if not n_hc:
-        hc += ["本轮无待人工条目。", ""]
-    (out_dir / f"human_check-{today}.md").write_text(
-        "\n".join(hc), encoding="utf-8")
+        w = item["window"]
+        hc_groups.setdefault((w["game"], w.get("ver", "default")),
+                             []).append(("锁失败", item["card"], w, None))
+    for (game, ver), entries in sorted(hc_groups.items()):
+        hc = [f"# human_check（待人工填写）· {game}（{ver}）· "
+              f"{datetime.date.today()}", "",
+              "> AI 已预填「AI辅助结论（联网）」，人只填「人工结论」；"
+              "填完本文件，对应卡片草稿才改名归档。", ""]
+        for n, (kind, c, w, no) in enumerate(entries, 1):
+            if kind == "待人工":
+                hc += [f"## 条目 {str(n).zfill(2)}",
+                       f"- 窗口：{game} · {w['episode_title']}"
+                       f"（素材卡 {str(no).zfill(3)}）",
+                       f"- 主题线索：{c.get('subject', '')}",
+                       f"- 待人工核对：{c['web_log']}",
+                       "- AI辅助结论（联网）："
+                       + (c.get("ai_web") or c.get("web_check")
+                          or "无外部可核信息，以游戏画面/人工记忆为准"),
+                       "- 人工结论：（待填写）", ""]
+            else:
+                hc += [f"## 条目 {str(n).zfill(2)}",
+                       f"- 窗口：{game} · {w['episode_title']}",
+                       f"- 模型给的原话：「{c.get('quote', '')}」"
+                       "（未逐字命中）",
+                       f"- 主题线索：{c.get('subject', '')}",
+                       "- AI辅助结论（联网）："
+                       + (c.get("ai_web")
+                          or "无外部核验项（未通过逐字锁，优先回查原文）"),
+                       "- 人工结论：（待填写）", ""]
+        (out_dir / f"human_check-{game}-{ver}-{today}.md").write_text(
+            "\n".join(hc), encoding="utf-8")
+    if not hc_groups:
+        (out_dir / f"human_check-{today}.md").write_text(
+            f"# human_check · {datetime.date.today()}\n\n本轮无待人工条目。\n",
+            encoding="utf-8")
     (out_dir / f"cards-state-{today}.json").write_text(
         json.dumps({"cards": cards_out, "human_check": human_check},
                    ensure_ascii=False, indent=1), encoding="utf-8")
