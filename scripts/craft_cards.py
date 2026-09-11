@@ -146,13 +146,13 @@ def render_card(no: int, c: dict, w: dict) -> list[str]:
            f"> 分项：{parts}"]
     if c.get("use"):
         out.append(f"> 建议用途：{c['use']}")
-    out.append("> 联网策略："
-               + (c.get("web_strategy") or "条件联网（价值拓展按后续调度）"))
+    out.append("> 联网策略：" + (c.get("web_strategy") or "条件联网"))
     if c.get("judge_reason"):
         out.append(f"> 判断理由：{c['judge_reason']}")
-    for rel_no, rel_subject, rel_ver in c.get("_rel", []):
-        out.append(f"> 相关联卡：素材卡 {str(rel_no).zfill(3)}《{rel_subject}》"
-                   f"（{rel_ver}）")
+    if c.get("tension_type") != "自我反转":
+        for rel_no, rel_subject, rel_ver in c.get("_rel", []):
+            out.append(f"> 相关联卡：素材卡 {str(rel_no).zfill(3)}"
+                       f"《{rel_subject}》（{rel_ver}）")
     out.append("> 机会价值：待评估")
     out += ["", f"- **主题**：{c['subject']}",
             f"- **当时的细节**：{c['detail']}",
@@ -162,11 +162,20 @@ def render_card(no: int, c: dict, w: dict) -> list[str]:
         out.append(f"- **张力**：{c['tension']}")
         if c.get("tension_type"):
             out.append(f"- **张力类型**：{c['tension_type']}")
+    if c.get("tension_type") == "自我反转":
+        for rel_no, rel_subject, rel_ver in c.get("_rel", []):
+            out.append(f"- 反转:参见素材卡 {str(rel_no).zfill(3)}"
+                       f"（{rel_subject}，{rel_ver}）")
     out += ["", boxes[0], boxes[1], "",
             "<details>", "<summary><strong>证据与核对信息</strong></summary>",
             "",
             f"> **证据位置**：{anchor}",
-            f"> **玩家原话**：“{c['quote']}”", "",
+            "> **"
+            + ("玩家原话" if c.get("speaker", "玩家") == "玩家"
+               and c.get("speaker_conf", "高") == "高"
+               else f"{c.get('speaker', '待确认')}原话"
+               f"（置信度{c.get('speaker_conf', '待确认')}）")
+            + f"**：“{c['quote']}”", "",
             "- **AI辅助结论（联网）**："
             + (c.get("ai_web") or c.get("web_check")
                or "无外部核验项——本卡信息全部来自转录原文（玩家口述）")]
@@ -178,6 +187,35 @@ def render_card(no: int, c: dict, w: dict) -> list[str]:
             f"- **说话人置信度**：{c.get('speaker_conf', '高')}",
             "", "</details>", ""]
     return out
+
+
+def find_context(todo: list, w: dict, quote: str) -> list[str]:
+    """在原始窗口里定位原话所在句，返回该句±2句（带行号）作为人工判断上下文。"""
+    src = None
+    for cand in todo:
+        if (cand.get("episode_title") == w.get("episode_title")
+                and cand.get("line_start") == w.get("line_start")
+                and cand.get("game") == w.get("game")
+                and cand.get("ver") == w.get("ver")):
+            src = cand
+            break
+    if src is None:
+        return []
+    sents = src["sentences"]
+    target = norm(quote)
+    joined = "".join(s["text"] for s in sents)
+    pos = joined.find(target)
+    if pos < 0:
+        return [f"> {s['text']}" for s in sents[:3]]
+    acc, idx = 0, 0
+    for i, s in enumerate(sents):
+        if acc <= pos < acc + len(s["text"]):
+            idx = i
+            break
+        acc += len(s["text"])
+    lo, hi = max(0, idx - 2), min(len(sents), idx + 3)
+    return [f"> [{sents[i]['ordinal']}] {sents[i]['text']}"
+            for i in range(lo, hi)]
 
 
 def run_from_json(path: str, todo: list, out_dir: Path, today: str,
@@ -339,13 +377,18 @@ def run_from_json(path: str, todo: list, out_dir: Path, today: str,
               "> AI 已预填「AI辅助结论（联网）」，人只填「人工结论」；"
               "填完本文件，对应卡片草稿才改名归档。", ""]
         for n, (kind, c, w, no) in enumerate(entries, 1):
+            ctx = find_context(todo, w, c.get("quote", ""))
             if kind == "待人工":
                 hc += [f"## 条目 {str(n).zfill(2)}",
                        f"- 窗口：{game} · {w['episode_title']}"
                        f"（素材卡 {str(no).zfill(3)}）",
                        f"- 主题线索：{c.get('subject', '')}",
-                       f"- 待人工核对：{c['web_log']}",
-                       "- AI辅助结论（联网）："
+                       f"- 卡内原话：「{c.get('quote', '')}」",
+                       f"- 待人工核对：{c['web_log']}"]
+                if ctx:
+                    hc += [f"- 原文上下文（原话所在句前后各2句，"
+                           f"[ ]内为原文行号）："] + ctx
+                hc += ["- AI辅助结论（联网）："
                        + (c.get("ai_web") or c.get("web_check")
                           or "无外部可核信息，以游戏画面/人工记忆为准"),
                        "- 人工结论：（待填写）", ""]
@@ -354,8 +397,10 @@ def run_from_json(path: str, todo: list, out_dir: Path, today: str,
                        f"- 窗口：{game} · {w['episode_title']}",
                        f"- 模型给的原话：「{c.get('quote', '')}」"
                        "（未逐字命中）",
-                       f"- 主题线索：{c.get('subject', '')}",
-                       "- AI辅助结论（联网）："
+                       f"- 主题线索：{c.get('subject', '')}"]
+                if ctx:
+                    hc += ["- 原文上下文（供回查比对）："] + ctx
+                hc += ["- AI辅助结论（联网）："
                        + (c.get("ai_web")
                           or "无外部核验项（未通过逐字锁，优先回查原文）"),
                        "- 人工结论：（待填写）", ""]
