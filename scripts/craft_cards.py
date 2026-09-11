@@ -129,10 +129,10 @@ def render_card(no: int, c: dict, w: dict) -> list[str]:
     total = sum(s for _, s in dims)
     tier = "高" if total >= 11 else ("中" if total >= 7 else "低")
     mx = max(s for _, s in dims)
-    parts = [f"**{n}({s})**" if s == mx else f"{n}({s})"
-             for _, n, s in sorted(((i, n, s) for i, (n, s) in
-                                    enumerate(dims)),
-                                   key=lambda t: (-t[2], t[0]))]
+    parts = " ｜ ".join(
+        f"{n} **{s}**" if s == mx else f"{n} {s}"
+        for _, n, s in sorted(((i, n, s) for i, (n, s) in enumerate(dims)),
+                              key=lambda t: (-t[2], t[0])))
     # 默认复选状态（规则17）：高=采用 低=删除 中=不勾
     if tier == "高":
         boxes = ["- [x] **采用**", "- [ ] 删除"]
@@ -142,9 +142,13 @@ def render_card(no: int, c: dict, w: dict) -> list[str]:
         boxes = ["- [ ] 采用", "- [ ] 删除"]
     out = [f"### 素材卡 {str(no).zfill(3)}｜{total}分", "",
            f"> 基础价值：{tier}（{total}/15）",
-           f"> 分项：{'、'.join(parts)}"]
+           f"> 分项：{parts}"]
     if c.get("use"):
         out.append(f"> 建议用途：{c['use']}")
+    out.append("> 联网策略："
+               + (c.get("web_strategy") or "条件联网（价值拓展按后续调度）"))
+    if c.get("judge_reason"):
+        out.append(f"> 判断理由：{c['judge_reason']}")
     out.append("> 机会价值：待评估")
     out += ["", f"- **主题**：{c['subject']}",
             f"- **当时的细节**：{c['detail']}",
@@ -154,27 +158,21 @@ def render_card(no: int, c: dict, w: dict) -> list[str]:
         out.append(f"- **张力**：{c['tension']}")
         if c.get("tension_type"):
             out.append(f"- **张力类型**：{c['tension_type']}")
-    out += ["", boxes[0], boxes[1], ""]
-    # AI辅助信息块（用户指定后置）：联网策略/AI辅助结论/判断理由
-    out += ["**AI辅助信息（联网）**", "",
-            f"- 联网策略："
-            + (c.get("web_strategy") or "条件联网（价值拓展按后续调度）"),
-            "- AI辅助结论（联网）："
-            + (c.get("ai_web") or c.get("web_check")
-               or "无外部核验项——本卡信息全部来自转录原文（玩家口述）")]
-    if c.get("judge_reason"):
-        out.append(f"- 判断理由：{c['judge_reason']}")
-    out += ["", "<details>", "<summary><strong>证据与核对信息</strong></summary>",
+    out += ["", boxes[0], boxes[1], "",
+            "<details>", "<summary><strong>证据与核对信息</strong></summary>",
             "",
             f"> **证据位置**：{anchor}",
             f"> **玩家原话**：“{c['quote']}”", "",
-            f"- **说话人**：{c.get('speaker', '玩家')}",
-            f"- **说话人置信度**：{c.get('speaker_conf', '高')}"]
+            "- **AI辅助结论（联网）**："
+            + (c.get("ai_web") or c.get("web_check")
+               or "无外部核验项——本卡信息全部来自转录原文（玩家口述）")]
     if c.get("web_check"):
         out.append(f"- **核对（联网）**：{c['web_check']}")
     if c.get("web_log"):
         out.append(f"- **核对记录**：{c['web_log']}")
-    out += ["", "</details>", ""]
+    out += [f"- **说话人**：{c.get('speaker', '玩家')}",
+            f"- **说话人置信度**：{c.get('speaker_conf', '高')}",
+            "", "</details>", ""]
     return out
 
 
@@ -288,21 +286,42 @@ def run_from_json(path: str, todo: list, out_dir: Path, today: str,
         fname = f"《{game}》素材卡草稿（{ver}）-{today}.md"
         (out_dir / fname).write_text("\n".join(md), encoding="utf-8")
         written.append(fname)
-    if human_check:
-        hc = [f"# human_check（待人工填写）· {datetime.date.today()}", ""]
-        for n, item in enumerate(human_check, 1):
-            c = item["card"]
-            hc += [f"## 条目 {str(n).zfill(2)}",
-                   f"- 窗口：{item['window']['game']} · "
-                   f"{item['window']['episode_title']}",
-                   f"- 模型给的原话：「{c.get('quote', '')}」（未逐字命中）",
-                   f"- 主题线索：{c.get('subject', '')}",
-                   "- AI辅助结论（联网）："
-                   + (c.get("ai_web")
-                      or "无外部核验项（未通过逐字锁，优先回查原文）"),
-                   "- 人工结论：（待填写）", ""]
-        (out_dir / f"human_check-{today}.md").write_text(
-            "\n".join(hc), encoding="utf-8")
+    # human_check（规则9/13）：逐字锁失败 + 各卡"待人工"核对项，每轮全量重写
+    hc = [f"# human_check（待人工填写）· {datetime.date.today()}", "",
+          "> AI 已预填「AI辅助结论（联网）」，人只填「人工结论」；"
+          "填完本文件，卡片才改名归档。", ""]
+    n_hc = 0
+    for it in cards_out:
+        c = it["card"]
+        if not c.get("web_log"):
+            continue
+        n_hc += 1
+        hc += [f"## 条目 {str(n_hc).zfill(2)}",
+               f"- 窗口：{it['window']['game']} · "
+               f"{it['window']['episode_title']}"
+               f"（素材卡 {str(it['no']).zfill(3)}）",
+               f"- 主题线索：{c.get('subject', '')}",
+               f"- 待人工核对：{c['web_log']}",
+               "- AI辅助结论（联网）："
+               + (c.get("ai_web") or c.get("web_check")
+                  or "无外部可核信息，以游戏画面/人工记忆为准"),
+               "- 人工结论：（待填写）", ""]
+    for item in human_check:
+        c = item["card"]
+        n_hc += 1
+        hc += [f"## 条目 {str(n_hc).zfill(2)}",
+               f"- 窗口：{item['window']['game']} · "
+               f"{item['window']['episode_title']}",
+               f"- 模型给的原话：「{c.get('quote', '')}」（未逐字命中）",
+               f"- 主题线索：{c.get('subject', '')}",
+               "- AI辅助结论（联网）："
+               + (c.get("ai_web")
+                  or "无外部核验项（未通过逐字锁，优先回查原文）"),
+               "- 人工结论：（待填写）", ""]
+    if not n_hc:
+        hc += ["本轮无待人工条目。", ""]
+    (out_dir / f"human_check-{today}.md").write_text(
+        "\n".join(hc), encoding="utf-8")
     (out_dir / f"cards-state-{today}.json").write_text(
         json.dumps({"cards": cards_out, "human_check": human_check},
                    ensure_ascii=False, indent=1), encoding="utf-8")
