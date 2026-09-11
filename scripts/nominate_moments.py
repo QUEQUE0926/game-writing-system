@@ -55,6 +55,7 @@ USE_HINT = {
     "提及": "跨游戏联动 / cross_references",
 }
 TOP_PER_EPISODE = 3   # 每集每板块提名上限
+HI_DETAIL_CAP = 20    # 高价值详情首屏上限，第 21 名起降入"高价值（备查）"
 CONTEXT = 2           # （备用）上下文句数
 MERGE_GAP_EMO = 4     # 高能命中合并间隔
 MERGE_GAP_SUB = 6     # 有料命中合并间隔
@@ -270,12 +271,18 @@ def main() -> None:
             total_hi += len(hi)
             total_mid += len(mid)
             md = [f"# {game} · 审核工作台", "",
-                  f"> 高 {len(hi)}（优先审核）/ 中 {len(mid)}"
+                  f"> 高 {len(hi)}（前 {min(len(hi), HI_DETAIL_CAP)} 张详情，"
+                  f"其余备查）/ 中 {len(mid)}"
                   f"（扫一眼）/ 低 {len(lo)}（默认不看）",
                   "> 勾 `- [ ]` 或回复候选编号即定制卡；"
                   "按 05 提炼约定制卡。", "",
                   "## ◆ 高价值 ｜ 优先审核", ""]
-            md += render(0, hi, detail=True) if hi else ["（本轮无）", ""]
+            md += render(0, hi[:HI_DETAIL_CAP], detail=True) if hi \
+                else ["（本轮无）", ""]
+            if len(hi) > HI_DETAIL_CAP:
+                md += [f"### 高价值（备查）｜ 第 {HI_DETAIL_CAP + 1} 名起，"
+                       "单行格式", ""]
+                md += render(HI_DETAIL_CAP, hi[HI_DETAIL_CAP:], detail=False)
             md += ["## ◇ 中价值 ｜ 快速扫一眼", ""]
             md += render(len(hi), mid, detail=False) if mid \
                 else ["（本轮无）", ""]
