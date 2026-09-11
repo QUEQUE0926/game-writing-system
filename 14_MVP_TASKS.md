@@ -18,8 +18,10 @@
 2. 导入 merged TXT（已完成：拖放弹窗 / prepare / auto-import / import-txt，
    预告确认 + 副本隔离 + 幂等去重；排列组合与批量组合测试全绿）
 3. Source / Segment（已完成：编码探测 + raw 归档 + 逐行 Segment，speaker=unknown 待分类）
-4. Speaker / Content classification ← 当前主线
-5. Episode
+4. Speaker / Content classification（进行中：规则轮 classify_speakers.py 支持
+   --source 过滤；dev 29 源中 14 源已分类）
+5. Episode（进行中：make_episodes.py 支持 --source 过滤；已知坑：幂等跳过是
+   版本级，同版本多源时第二个源会被跳过，待改为源级）
 6. Material Card
 7. 人工确认
 8. Tag / Cross Reference

@@ -1,6 +1,6 @@
 # 03_DATA_MODEL
 
-> 本文档按代码现状整理（migrations/001–003 + tests/integration/test_schema_contract.py 快照）。
+> 本文档按代码现状整理（migrations/001–004 + tests/integration/test_schema_contract.py 快照）。
 > 列名快照由该测试钉死，改名会被 verify 拦截；冻结规则见仓库根 AGENTS.md。
 
 ## 表清单（按域分组）
@@ -55,6 +55,7 @@
 | name | TEXT NOT NULL | UNIQUE(game_id, name) |
 | status | TEXT | 四态 |
 | created_at | TEXT | |
+| sort_key | INTEGER | 迁移 004 新增：手动版本序号，可空。小的排前；NULL 排后按 created_at+rowid 兜底。仅影响展示排序，不改数据。经 `gws.py set-version-order` 修改（写 audit_log） |
 
 **game_aliases**（迁移 002 新增）
 | 列 | 类型 | 说明 |

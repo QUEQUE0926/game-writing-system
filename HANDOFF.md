@@ -28,7 +28,8 @@
 
 ### 架构（全部已落地、verify 全 PASS，约 41+ 测试）
 - **环境隔离**：`data/<dev|test|prod>/` 三套物理隔离 SQLite，各含 `app.db、raw/、inbox/、exports/、backups/、tmp/`。测试必须用 test 环境或临时目录（`GWS_RUNNING_TESTS=1` + `GWS_DATA_ROOT=$(mktemp -d)`），**禁止拿生产数据测试**。
-- **Schema**：22 张表。001 建 21 表 + 002 加 `game_aliases`（别名全库唯一）+ **003 加固**（games 两个 partial unique index 封独立游戏同名 NULL 漏洞、episode_segments 加 position 列）。当前 schema version = 3。
+- **Schema**：22 张表。001 建 21 表 + 002 加 `game_aliases`（别名全库唯一）+ 003 加固（games 两个 partial unique index 封独立游戏同名 NULL 漏洞、episode_segments 加 position 列）+ **004 加 `game_versions.sort_key`**（手动版本序号，可空；NULL 排后按 created_at+rowid 兜底；仅影响展示排序）。当前 schema version = 4。
+  改序号用 `python scripts/gws.py set-version-order <版本名或id> <数字|clear>`（多命中报错不猜，写 audit_log）。dev 已标：灰烬之国 正式版=1、8月更新=2。
 - **主拓扑**：`series → games → game_versions → sources → segments`，全部靠 **UUIDv7 稳定 id** 外键关联，name 只在导入入口解析一次用。下游还有 episodes / material_cards / claims / articles 等已建表（空房待入住）。
 - **状态机**：长期实体表有 status（active/archived/deprecated/trashed，trashed 是终点且拒新引用）；5 张纯关系表（episode_segments、material_card_evidence、asset_tags、claim_evidence、project_assets）**无 status**，直接删 + audit_log。
 
@@ -46,15 +47,15 @@
 - 导入只接受 `.txt`（docx 支持已按用户要求撤销）。
 - 只读原文归档：`data/<env>/raw/<sha前2位>/<sha>.txt`，永不覆盖。
 
-## 三、当前状态（2026-09-12 凌晨二次更新，主线第 1~6 步全部完成）
+## 三、当前状态（2026-09-12 晚三次更新）
 
-**没有卡点，主线进度：第 1~6 步全部完成（建档 → 导入 → 切句 → 分说话人 → 切集 → 验收固化）。**
+**没有卡点。主线：第 1~6 步完成；第 7 步素材卡制作中（提名已出，等用户勾选）。**
 
-- **dev 库真实数据**：6 个源文件、4611 句台词，**说话人已分类**——author 3257 / teammate 147（镇邪Ⅱ 真人队友）/ game_audio 116（星际2 的"发言人2"判定为游戏语音）/ 其余 1091 条 unknown 为"发言人N"标签行和文件标题头（content_type=noise，属预期，不是漏分）。全部 GBK 编码，原文在 `data/dev/raw/` 完好。
-- **Episode 切集完成**：77 集 / 4608 条集内记录（镇邪Ⅱ×51、星际裂变×11、星际2×5、沃德灵×5、银翼喵侍×5）。切法：每集约 50 句有效台词一刀，刀口优先落在说话人边界。3 句的 test 文件按"不足 10 句不切"规则自动跳过。
-- **验收固化完成**：`tests/integration/test_pipeline_steps.py`（9 用例）把说话人分类和切集规则钉死，改坏行为 verify 直接 FAIL。
-- **第 7 步已启动（素材卡）**：提名工具 `scripts/nominate_moments.py` 跑完三遍规则扫描（①情绪高能 ②分析/对比/叙事/总结 ③游戏提及花名册巡逻），391 个候选已输出到 `data/dev/exports/nominations/`（索引 + 5 份游戏工作台）。
-- **工作分支常驻 dev**（不要把文件夹切到 main——main 上没有 dev 的新文件）。dev 分支最新 commit：`842db45`。
+- **dev 库真实数据（2026-09-12 晚）**：26 系列 / 27 版本 / 29 个源 / 约 3.3 万句台词。**已完成分类+切集的源 14 个**（原 6 个 + 本轮 7 个 + 星际2 复扫）：镇邪Ⅱ、星际裂变×2、星际2、沃德灵、银翼喵侍、Apex 训练场（20集）、Good Heavens（10集）、Subnautica2 源a（35集）、Yerba Buena（4集）、地狱公主（24集）、灰烬之国正式版（14集）、灰烬之国8月更新（9集）。切集总数 77+116=193 集左右。
+- **剩余未处理源约 15 个**（三国朋克 3031 句、双影奇境 4901 句、苏丹的游戏 1110 句等），要跑时用户说了算。
+- **第 7 步素材卡**：提名工具跑完三遍规则扫描，391 个候选在 `data/dev/exports/nominations/`。注意：提名只覆盖旧 6 源，新导入的 23 个源还没提名，制卡前可能要重跑提名扫描。
+- **总览页**：`data/dev/exports/dev_games_overview.html`（按 sort_key 排序，含各源台词数）。
+- **工作分支常驻 dev**。dev 分支最新 commit：`234f2d0`。
 - prod 仍是干净空库。
 - 遗留小瑕疵（不急，用户未拍板）：① 银翼喵侍的版本名是 `dmeo`（demo 打错）；② 星际裂变下挂着一个 159 字节的 test 小文件（3 句台词）。
 
@@ -96,6 +97,9 @@
 20. **断行粒度跨源差异巨大**（行中位数 4~29 字，银翼喵侍 34% 超 80 字）：长度信号只能做"文件内部相对值"（如每集 p90），禁止用绝对阈值（40 字算长句之类）。
 21. **报告呈现规矩（用户否决过的方案不要再提）**：① 提名报告**每个游戏一份工作台**，不堆一个大文件；② 分档按**每游戏内部相对分**（高=前30%，且详情首屏上限 20 张，第 21 名起降入单行备查）；③ 仓库根 `exports/` **不碰、不做镜像同步**（用户明确否决）；④ 报告只显示命中句引文，`[game_audio]`/"发言人N"噪音行不进报告。
 22. **AGENTS.md 唯一注册表已扩到 8 组枚举**（2026-09-12 用户批准）：新增 source_type / tags.category / asset_type / consumer_type，和 03_DATA_MODEL.md 的枚举表对齐，代码里禁造同义词。
+23. **created_at 只有秒级精度**，同一秒建档的两行 ORDER BY created_at 会打平、顺序随机 → 一切"按时间兜底"的排序必须再补 `rowid`（2026-09-12 sort_key 上线时 verify 抓出过）。
+24. **make_episodes 的幂等跳过是"版本级"**：同版本多个源时，该版本跑过一次切集后，另一个源会被整体跳过（Subnautica2 源b 2223 句就卡在这）。要给同版本第二源切集，先把跳过逻辑改成源级再跑。
+25. **classify_speakers.py / make_episodes.py 都支持 `--source <id前缀>`** 可选过滤（只处理命中的源），批量跑单源用它；不带参数仍是全库扫。
 
 ## 六、验证方式速查
 
