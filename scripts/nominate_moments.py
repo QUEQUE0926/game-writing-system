@@ -1,20 +1,20 @@
 # -*- coding: utf-8 -*-
-"""第 7 步前置：素材卡候选瞬间提名（规则轮，零成本、只读）。
+"""第 7 步前置：素材卡候选提名（三遍规则扫描 + 审核工作台输出）。
 
-从每集里按"情绪密度"语言特征打分，聚成候选瞬间，导出提名报告
-（Markdown，含上下文与行号锚点），供作者挑选后制成素材卡。
+扫描（零模型成本，全部规则）：
+① 高能瞬间：情绪词/大笑/惊叹打分；
+② 有料片段：分析/对比/叙事/总结特征词 + 文件内相对长行（每集内容行 p90）；
+③ 游戏提及：花名册（games 主名 + aliases）精确匹配，排除本集自身游戏。
 
-约定（05_MATERIAL_CARD_SYSTEM 提炼约定）：
-- AI 只提名，不代笔；作者挑选/改写后才建卡。
+输出（每游戏一份审核工作台 + 索引，分档阈值按每游戏内部相对分）：
+- 每游戏内部按分数排序，三档：高=本游戏前 30%（默认定制卡候选）/
+  中=次 30%（默认备选）/ 低=其余（默认剔除）；阈值随游戏自适应；
+- 每条只显示命中句原文（不堆上下文），带集/行号锚点与建议用途；
+- 跨游戏提及候选归"话说出口的游戏"的工作台，标注"提到：某游戏"；
+- 勾选即选择：把 `- [ ]` 改成 `- [x]`（或直接回复候选编号）。
 
-打分特征（高能语言信号）：
-- 情绪词/粗口强化：卧槽/我操/我去/离谱/服了/笑死/好家伙/绝了/寄/抽象…
-- 大笑：哈哈哈(3+)、233、笑尿
-- 惊叹/反问：居然/竟然/不会吧/什么鬼/???/！！
-
-用法：
-  python scripts/nominate_moments.py [每集提名数，默认3]
-输出：data/<env>/exports/moment_candidates-<日期>.md
+用法：python scripts/nominate_moments.py [每集提名上限，默认3]
+输出：data/<env>/exports/nominations/索引-<日期>.md + <游戏名>-<日期>.md
 """
 from __future__ import annotations
 
@@ -33,8 +33,6 @@ CUES = re.compile(
     r"寄|吓死|麻了|炸了|逆天|变态|恶心|离大谱|什么鬼|不会吧|居然|竟然|"
     r"哈哈哈+|233+|笑尿|爽|舒服了)")
 
-# ── 第二遍：有料片段（分析/对比/叙事/总结）──
-# 特征词为主（不受断行影响）；文件内相对长度为辅（该源最长前10%行 +1 分）
 SUBJECT_CUES = {
     "分析": re.compile(
         r"其实|本质|原因是|相当于|类似于|问题在于|核心是|设计得|机制|逻辑上|"
@@ -48,11 +46,18 @@ SUBJECT_CUES = {
         r"总的来说|总体来说|总体感觉|整体来说|玩下来|玩到现在|最大问题|"
         r"最大亮点|最大的|节奏"),
 }
-CONTEXT = 2      # 候选前后各带几句上下文
-ANALYSIS_TOP = 3  # 每集有料片段提名数
-MERGE_GAP = 6     # 有料片段合并间隔
-TOP_PER_EPISODE = 3  # 每集每板块提名数
-
+USE_HINT = {
+    "情绪": "开场情绪 / 标题钩子坯",
+    "分析": "机制论述 / 判断段",
+    "对比": "跨游戏参照（reuse_value）",
+    "叙事": "剧情线 / 体验过程",
+    "总结": "观点收束 / 结尾",
+    "提及": "跨游戏联动 / cross_references",
+}
+TOP_PER_EPISODE = 3   # 每集每板块提名上限
+CONTEXT = 2           # （备用）上下文句数
+MERGE_GAP_EMO = 4     # 高能命中合并间隔
+MERGE_GAP_SUB = 6     # 有料命中合并间隔
 
 
 def score(text: str) -> int:
@@ -60,7 +65,6 @@ def score(text: str) -> int:
 
 
 def subject_score(text: str, len_threshold: int) -> tuple[int, list[str]]:
-    """返回 (得分, 命中类型列表)。特征词每类1分；文件内相对长行 +1。"""
     kinds, pts = [], 0
     for kind, pat in SUBJECT_CUES.items():
         if pat.search(text):
@@ -72,7 +76,6 @@ def subject_score(text: str, len_threshold: int) -> tuple[int, list[str]]:
 
 
 def _merge(hits: list, gap: int) -> list[list]:
-    """相邻命中合并（间隔<=gap 句）。"""
     if not hits:
         return []
     groups, cur = [], [hits[0]]
@@ -87,36 +90,26 @@ def _merge(hits: list, gap: int) -> list[list]:
 
 
 def main() -> None:
-    top_n = int(sys.argv[1]) if len(sys.argv) > 1 and sys.argv[1].isdigit() \
-        else TOP_PER_EPISODE
     cfg = load_config()
     conn = connect(cfg)
     try:
-        episodes = conn.execute("""
-            SELECT e.id, e.title, g.name AS game
-            FROM episodes e
-            JOIN game_versions v ON v.id = e.version_id
-            JOIN games g ON g.id = v.game_id
-            ORDER BY g.name, e.title""").fetchall()
-        lines = ["# 素材卡候选提名报告",
-                 "",
-                 f"> 生成时间：{datetime.date.today()}　环境：{cfg.env}",
-                 "> 两遍规则扫描：①高能瞬间（情绪词）；②有料片段"
-                 "（分析/对比/叙事/总结特征词 + 文件内相对长行）。",
-                 "> 仅供作者挑选；挑中后按 05 提炼约定制卡"
-                 "（subject=钩子坯 / quote=逐字原话 / 无判断不收卡）。",
-                 ""]
-        total_hi, total_sub = 0, 0
-        # ── 游戏提及巡逻：花名册 = games 主名 + game_aliases ──
-        roster = {}  # name -> game 显示名
+        roster = {}
         for r in conn.execute("SELECT name FROM games"):
             roster[r["name"]] = r["name"]
         for r in conn.execute("""
             SELECT ga.alias, g.name FROM game_aliases ga
             JOIN games g ON g.id = ga.game_id"""):
             roster.setdefault(r["alias"], r["name"])
-        # 长名优先（避免"星际争霸"抢先吃掉"星际争霸2"）
         roster_names = sorted(roster, key=len, reverse=True)
+
+        episodes = conn.execute("""
+            SELECT e.id, e.title, g.name AS game
+            FROM episodes e
+            JOIN game_versions v ON v.id = e.version_id
+            JOIN games g ON g.id = v.game_id
+            ORDER BY g.name, e.title""").fetchall()
+
+        candidates = []  # dict: score, kinds, quotes, game, ep, lines
         for ep in episodes:
             segs = conn.execute("""
                 SELECT seg.id, seg.text, seg.speaker, seg.line_start
@@ -124,109 +117,179 @@ def main() -> None:
                 JOIN segments seg ON seg.id = es.segment_id
                 WHERE es.episode_id = ? ORDER BY es.position""",
                 (ep["id"],)).fetchall()
-            usable = [s for s in segs
-                      if s["speaker"] in ("author", "teammate")]
+            usable = [s for s in segs if s["speaker"] in ("author", "teammate")]
             if not usable:
                 continue
-
-            def emit(block_title: str, moments: list, rank_total: int):
-                nonlocal lines
-                out = []
-                for rank, m in enumerate(moments[:rank_total], start=1):
-                    i0 = max(m[0][0] - CONTEXT, 0)
-                    i1 = min(m[-1][0] + CONTEXT, len(segs) - 1)
-                    if block_title.startswith("高能"):
-                        kinds = "情绪"
-                    else:
-                        kinds = "+".join(m[0][3]) or "长句"
-                    out.append(
-                        f"### {block_title} {rank}"
-                        f"（{kinds}，强度 {m[0][2]}，"
-                        f"原文第 {segs[i0]['line_start']}–"
-                        f"{segs[i1]['line_start']} 行）")
-                    out.append("")
-                    for i in range(i0, i1 + 1):
-                        s = segs[i]
-                        who = {"author": "作者", "teammate": "队友"}.get(
-                            s["speaker"], s["speaker"])
-                        mark = " ←" if any(j[0] == i for j in m) else ""
-                        out.append(f"- [{who}] {s['text']}{mark}")
-                    out.append("")
-                return out
-
-            # ① 高能瞬间
             usable_ids = {s["id"] for s in usable}
+
+            def add(kind_label: str, groups: list):
+                for g in groups:
+                    pts = sum(h[2] for h in g)
+                    hits = g if len(g) <= 2 else \
+                        sorted(g, key=lambda h: h[2], reverse=True)[:2]
+                    quotes = [f"{h[1]['text']}（{h[1]['line_start']} 行）"
+                              for h in hits]
+                    candidates.append({
+                        "score": pts,
+                        "kinds": kind_label,
+                        "quotes": quotes,
+                        "game": ep["game"],
+                        "ep": ep["title"],
+                        "span": (min(h[1]["line_start"] for h in g),
+                                 max(h[1]["line_start"] for h in g)),
+                    })
+
+            # ① 高能
             hits = [(i, s, score(s["text"]), ["情绪"]) for i, s in
                     enumerate(segs) if s["id"] in usable_ids
                     and score(s["text"]) > 0]
-            hi_groups = _merge(hits, 4) if hits else []
-            hi_groups.sort(key=lambda m: m[0][2], reverse=True)
+            groups = _merge(hits, MERGE_GAP_EMO)
+            # 每集只留最强的前 TOP_PER_EPISODE 个
+            groups.sort(key=lambda g: sum(h[2] for h in g), reverse=True)
+            add("情绪", groups[:TOP_PER_EPISODE])
 
-            # ② 有料片段（每集自身的内容行 p90 作为相对长行阈值）
-            content_lens = sorted(len(s["text"]) for s in usable)
-            p90 = content_lens[int(len(content_lens) * 0.9)] if content_lens else 0
+            # ② 有料（每集内容行 p90 作相对长行阈值）
+            lens = sorted(len(s["text"]) for s in usable)
+            p90 = lens[int(len(lens) * 0.9)] if lens else 0
             shits = []
             for i, s in enumerate(segs):
-                if s["speaker"] not in ("author", "teammate"):
+                if s["id"] not in usable_ids or score(s["text"]) > 0:
                     continue
                 pts, kinds = subject_score(s["text"], p90)
-                if pts > 0 and score(s["text"]) == 0:  # 不与高能瞬间重复
+                if pts > 0:
                     shits.append((i, s, pts, kinds))
-            sub_groups = _merge(shits, MERGE_GAP) if shits else []
-            sub_groups.sort(key=lambda m: m[0][2], reverse=True)
+            sgroups = _merge(shits, MERGE_GAP_SUB)
+            sgroups.sort(key=lambda g: sum(h[2] for h in g), reverse=True)
+            for g in sgroups[:TOP_PER_EPISODE]:
+                pts = sum(h[2] for h in g)
+                kinds = sorted({k for h in g for k in h[3]}) or ["长句"]
+                hits2 = g if len(g) <= 2 else \
+                    sorted(g, key=lambda h: h[2], reverse=True)[:2]
+                candidates.append({
+                    "score": pts,
+                    "kinds": "+".join(kinds),
+                    "quotes": [f"{h[1]['text']}（{h[1]['line_start']} 行）"
+                               for h in hits2],
+                    "game": ep["game"],
+                    "ep": ep["title"],
+                    "span": (min(h[1]["line_start"] for h in g),
+                             max(h[1]["line_start"] for h in g)),
+                })
 
-            # ③ 游戏提及（花名册精确匹配；排除本集自己所在游戏名）
-            mention_hits = []
+            # ③ 游戏提及
+            mhits = []
             for i, s in enumerate(segs):
-                if s["speaker"] not in ("author", "teammate"):
+                if s["id"] not in usable_ids:
                     continue
                 mentioned = {roster[n] for n in roster_names if n in s["text"]}
                 mentioned.discard(ep["game"])
                 if mentioned:
-                    mention_hits.append((i, s, len(mentioned),
-                                         sorted(mentioned)))
-            mention_groups = _merge(mention_hits, MERGE_GAP) \
-                if mention_hits else []
-            mention_groups.sort(key=lambda m: m[0][2], reverse=True)
+                    mhits.append((i, s, len(mentioned), sorted(mentioned)))
+            for g in _merge(mhits, MERGE_GAP_SUB):
+                games_in = sorted({gm for _, _, _, gm in g for gm in gm})
+                candidates.append({
+                    "score": len(games_in),
+                    "kinds": "提及",
+                    "quotes": [
+                        f"{h[1]['text']}（{h[1]['line_start']} 行）"
+                        for h in g[:2]],
+                    "game": ep["game"],
+                    "ep": ep["title"],
+                    "span": (min(h[1]["line_start"] for h in g),
+                             max(h[1]["line_start"] for h in g)),
+                    "games": games_in,
+                })
 
-            if not hi_groups and not sub_groups and not mention_groups:
-                continue
-            lines.append(f"## {ep['game']} · {ep['title']}")
-            lines.append("")
-            if hi_groups:
-                lines.append(f"### ◆ 高能瞬间（前 {top_n}）")
-                lines.append("")
-                lines += emit("高能", hi_groups, top_n)
-                total_hi += min(len(hi_groups), top_n)
-            if sub_groups:
-                lines.append(f"### ◇ 有料片段（前 {top_n}）")
-                lines.append("")
-                lines += emit("有料", sub_groups, top_n)
-                total_sub += min(len(sub_groups), top_n)
-            if mention_groups:
-                lines.append("### ◎ 游戏提及（全部）")
-                lines.append("")
-                for rank, m in enumerate(mention_groups, start=1):
-                    games_in = sorted({g for _, _, _, gs in m for g in gs})
-                    i0 = max(m[0][0] - CONTEXT, 0)
-                    i1 = min(m[-1][0] + CONTEXT, len(segs) - 1)
-                    lines.append(f"### 提及 {rank}（提到：{'、'.join(games_in)}，"
-                                 f"原文第 {segs[i0]['line_start']}–"
-                                 f"{segs[i1]['line_start']} 行）")
-                    lines.append("")
-                    for i in range(i0, i1 + 1):
-                        s = segs[i]
-                        who = {"author": "作者", "teammate": "队友"}.get(
-                            s["speaker"], s["speaker"])
-                        mark = " ←" if any(j[0] == i for j in m) else ""
-                        lines.append(f"- [{who}] {s['text']}{mark}")
-                    lines.append("")
+        # 按游戏分组，每游戏内部相对分档（高=前30%，中=次30%，低=其余）
+        by_game: dict[str, list] = {}
+        for c in candidates:
+            by_game.setdefault(c["game"], []).append(c)
+        for game, lst in by_game.items():
+            lst.sort(key=lambda c: c["score"], reverse=True)
+            n_hi = max(1, -(-len(lst) * 3 // 10))     # ceil(n*0.3)，至少1
+            n_mid = -(-len(lst) * 3 // 10)
+            hi, mid = lst[:n_hi], lst[n_hi:n_hi + n_mid]
+            lo = lst[n_hi + n_mid:]
+            by_game[game] = (hi, mid, lo)
 
-        out = cfg.exports_dir / \
-            f"moment_candidates-{datetime.date.today():%Y%m%d}.md"
-        out.parent.mkdir(parents=True, exist_ok=True)
-        out.write_text("\n".join(lines), encoding="utf-8")
-        print(f"提名完成：高能瞬间 {total_hi} + 有料片段 {total_sub} → {out}")
+        def render(idx0: int, lst: list, detail: bool) -> list[str]:
+            out, n = [], idx0
+            for c in lst:
+                n += 1
+                use = "、".join(USE_HINT.get(k, "待定")
+                                for k in c["kinds"].split("+"))
+                extra = f"　提到：{'、'.join(c['games'])}" \
+                    if c.get("games") else ""
+                if detail:
+                    out.append(f"### 候选 {str(n).zfill(3)}｜{c['score']} 分"
+                               f"｜{c['kinds']}{extra}")
+                    out.append("")
+                    for q in c["quotes"]:
+                        out.append(f"> {q}")
+                    out.append("")
+                    out.append(f"- 出处：{c['game']} · {c['ep']}"
+                               f" · 原文第 {c['span'][0]}–{c['span'][1]} 行")
+                    out.append(f"- 建议用途：{use}")
+                    out.append("- [ ] 制卡？")
+                    out.append("")
+                else:
+                    q = c["quotes"][0]
+                    if len(q) > 80:
+                        q = q[:77] + "…"
+                    out.append(f"- [ ] 候选 {str(n).zfill(3)}｜{c['score']}分"
+                               f"｜{c['kinds']}｜{q}"
+                               f"｜{c['game']}·{c['ep']}")
+            return out
+
+        out_dir = cfg.exports_dir / "nominations"
+        out_dir.mkdir(parents=True, exist_ok=True)
+        today = f"{datetime.date.today():%Y%m%d}"
+
+        index = ["# 素材卡候选提名 · 总索引", "",
+                 f"> 生成时间：{datetime.date.today()}　环境：{cfg.env}"
+                 f"　候选总数：{len(candidates)}",
+                 "> 每个游戏一份工作台，分档按该游戏内部相对分"
+                 "（高=前30% / 中=次30% / 低=其余）。",
+                 "> 想写哪个游戏就开哪份工作台；勾选或回复候选编号即可。", "",
+                 "| 游戏 | 高 | 中 | 低 | 最高分预览 | 跨游戏提及 |",
+                 "|---|---|---|---|---|---|"]
+        for game in sorted(by_game):
+            hi, mid, lo = by_game[game]
+            top = hi[0] if hi else (mid[0] if mid else lo[0])
+            preview = top["quotes"][0]
+            if len(preview) > 40:
+                preview = preview[:37] + "…"
+            mentions = len([c for c in hi + mid + lo if c.get("games")])
+            fname = f"{game}-{today}.md"
+            index.append(f"| [{game}]({fname}) | {len(hi)} | {len(mid)} | "
+                         f"{len(lo)} | {preview} | {mentions} |")
+
+        total_hi = total_mid = 0
+        for game in sorted(by_game):
+            hi, mid, lo = by_game[game]
+            total_hi += len(hi)
+            total_mid += len(mid)
+            md = [f"# {game} · 审核工作台", "",
+                  f"> 高 {len(hi)}（优先审核）/ 中 {len(mid)}"
+                  f"（扫一眼）/ 低 {len(lo)}（默认不看）",
+                  "> 勾 `- [ ]` 或回复候选编号即定制卡；"
+                  "按 05 提炼约定制卡。", "",
+                  "## ◆ 高价值 ｜ 优先审核", ""]
+            md += render(0, hi, detail=True) if hi else ["（本轮无）", ""]
+            md += ["## ◇ 中价值 ｜ 快速扫一眼", ""]
+            md += render(len(hi), mid, detail=False) if mid \
+                else ["（本轮无）", ""]
+            md += ["## · 低价值 ｜ 备查，默认不看", ""]
+            md += render(len(hi) + len(mid), lo, detail=False) if lo \
+                else ["（本轮无）", ""]
+            (out_dir / f"{game}-{today}.md").write_text(
+                "\n".join(md), encoding="utf-8")
+
+        (out_dir / f"索引-{today}.md").write_text(
+            "\n".join(index), encoding="utf-8")
+        print(f"提名完成：{len(by_game)} 个游戏，高 {total_hi} / 中 "
+              f"{total_mid} / 低 {len(candidates) - total_hi - total_mid}"
+              f" → {out_dir}")
     finally:
         conn.close()
 
