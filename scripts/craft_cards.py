@@ -218,6 +218,85 @@ def find_context(todo: list, w: dict, quote: str) -> list[str]:
             for i in range(lo, hi)]
 
 
+def _bigrams(s: str) -> set[str]:
+    s = norm(s)
+    return {s[i:i + 2] for i in range(len(s) - 1)} if len(s) > 1 else {s}
+
+
+def _jaccard(a: set, b: set) -> float:
+    if not a or not b:
+        return 0.0
+    return len(a & b) / len(a | b)
+
+
+TWIN_WINDOW_SIM = 0.60    # 孪生窗口阈值（跨版本句子几乎相同的窗口）
+RARE_TERM_MAX_CARDS = 3   # 主题词出现卡数≤此值才算"稀有词"
+RARE_TERM_MIN_SHARE = 1   # 跨版本卡共享稀有主题词≥此数即自动挂链
+_CJK = re.compile(r"[\u4e00-\u9fff]{2}")
+
+
+def _clean_bigrams(s: str) -> set[str]:
+    """只保留纯汉字的二元组（剔除标点、英文、数字碎片）。"""
+    return {t for t in _bigrams(s) if _CJK.fullmatch(t)}
+
+
+def _window_text(todo: list, wkey: tuple) -> str:
+    for w in todo:
+        if (w.get("source_id"), w["episode_title"],
+                w["line_start"]) == wkey:
+            return "".join(s["text"] for s in w["sentences"])
+    return ""
+
+
+def auto_link_cross_version(cards_out: list, todo: list) -> list[tuple]:
+    """跨版本自动匹配，两个可解释信号：
+    ① 孪生窗口：两版本窗口原文几乎相同（同一段内容被重复转写/两份录像）；
+    ② 稀有主题词：两卡的主题共享只在本批极少数卡出现的词（专有名词/机制名）。
+    命中即双向挂"相关联卡"。返回自动配对清单供报表核对。"""
+    wkeys = {(it["window"]["source_id"], it["window"]["episode_title"],
+              it["window"]["line_start"]): it for it in cards_out}
+    kb = {k: _bigrams(_window_text(todo, k)) for k in wkeys}
+    # 稀有主题词表（subject 的纯汉字二元组，按出现卡数过滤）
+    from collections import Counter
+    subj_terms = [_clean_bigrams(it["card"]["subject"]) for it in cards_out]
+    df = Counter(t for ts in subj_terms for t in ts)
+    rare = [{t for t in ts if df[t] <= RARE_TERM_MAX_CARDS}
+            for ts in subj_terms]
+    pairs: list[tuple] = []
+    linked: set[tuple] = set()
+
+    def link(a, b, why: str):
+        key = (min(a["no"], b["no"]), max(a["no"], b["no"]))
+        if key in linked:
+            return
+        linked.add(key)
+        pairs.append((a["no"], b["no"], why))
+        ra = a["card"].setdefault("_rel", [])
+        rb = b["card"].setdefault("_rel", [])
+        if (b["no"], b["card"]["subject"], b["ver"]) not in ra:
+            ra.append((b["no"], b["card"]["subject"], b["ver"]))
+        if (a["no"], a["card"]["subject"], a["ver"]) not in rb:
+            rb.append((a["no"], a["card"]["subject"], a["ver"]))
+
+    for i, a in enumerate(cards_out):
+        ka = (a["window"]["source_id"], a["window"]["episode_title"],
+              a["window"]["line_start"])
+        for j, b in enumerate(cards_out):
+            if j <= i or a["window"]["game"] != b["window"]["game"] \
+                    or a["ver"] == b["ver"]:
+                continue
+            kb2 = (b["window"]["source_id"], b["window"]["episode_title"],
+                   b["window"]["line_start"])
+            if ka in kb and kb2 in kb and _jaccard(kb[ka], kb[kb2]) \
+                    >= TWIN_WINDOW_SIM:
+                link(a, b, "孪生窗口")
+                continue
+            share = rare[i] & rare[j]
+            if len(share) >= RARE_TERM_MIN_SHARE:
+                link(a, b, "主题共词:" + "、".join(sorted(share)[:2]))
+    return pairs
+
+
 def run_from_json(path: str, todo: list, out_dir: Path, today: str,
                   cfg=None) -> None:
     """人工/AI 直接产卡模式：同一套逐字锁与渲染，只是卡由外部 JSON 提供。
@@ -306,6 +385,13 @@ def run_from_json(path: str, todo: list, out_dir: Path, today: str,
             entry = (it["no"], it["card"]["subject"], it["ver"])
             if entry not in back:
                 back.append(entry)
+
+    # 跨版本自动匹配（算法兜底，不依赖写卡人手点）
+    auto_pairs = auto_link_cross_version(cards_out, todo)
+    if auto_pairs:
+        print("自动跨版本配对：")
+        for na, nb, why in auto_pairs:
+            print(f"  卡{na:03d} ↔ 卡{nb:03d}（{why}）")
 
     sec_title = {"高": "◆ 高价值 ｜ 优先审核",
                  "中": "◇ 中价值 ｜ 按需保留",
