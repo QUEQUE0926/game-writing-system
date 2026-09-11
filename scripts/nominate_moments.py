@@ -107,6 +107,16 @@ def main() -> None:
                  "（subject=钩子坯 / quote=逐字原话 / 无判断不收卡）。",
                  ""]
         total_hi, total_sub = 0, 0
+        # ── 游戏提及巡逻：花名册 = games 主名 + game_aliases ──
+        roster = {}  # name -> game 显示名
+        for r in conn.execute("SELECT name FROM games"):
+            roster[r["name"]] = r["name"]
+        for r in conn.execute("""
+            SELECT ga.alias, g.name FROM game_aliases ga
+            JOIN games g ON g.id = ga.game_id"""):
+            roster.setdefault(r["alias"], r["name"])
+        # 长名优先（避免"星际争霸"抢先吃掉"星际争霸2"）
+        roster_names = sorted(roster, key=len, reverse=True)
         for ep in episodes:
             segs = conn.execute("""
                 SELECT seg.id, seg.text, seg.speaker, seg.line_start
@@ -165,7 +175,21 @@ def main() -> None:
             sub_groups = _merge(shits, MERGE_GAP) if shits else []
             sub_groups.sort(key=lambda m: m[0][2], reverse=True)
 
-            if not hi_groups and not sub_groups:
+            # ③ 游戏提及（花名册精确匹配；排除本集自己所在游戏名）
+            mention_hits = []
+            for i, s in enumerate(segs):
+                if s["speaker"] not in ("author", "teammate"):
+                    continue
+                mentioned = {roster[n] for n in roster_names if n in s["text"]}
+                mentioned.discard(ep["game"])
+                if mentioned:
+                    mention_hits.append((i, s, len(mentioned),
+                                         sorted(mentioned)))
+            mention_groups = _merge(mention_hits, MERGE_GAP) \
+                if mention_hits else []
+            mention_groups.sort(key=lambda m: m[0][2], reverse=True)
+
+            if not hi_groups and not sub_groups and not mention_groups:
                 continue
             lines.append(f"## {ep['game']} · {ep['title']}")
             lines.append("")
@@ -179,6 +203,24 @@ def main() -> None:
                 lines.append("")
                 lines += emit("有料", sub_groups, top_n)
                 total_sub += min(len(sub_groups), top_n)
+            if mention_groups:
+                lines.append("### ◎ 游戏提及（全部）")
+                lines.append("")
+                for rank, m in enumerate(mention_groups, start=1):
+                    games_in = sorted({g for _, _, _, gs in m for g in gs})
+                    i0 = max(m[0][0] - CONTEXT, 0)
+                    i1 = min(m[-1][0] + CONTEXT, len(segs) - 1)
+                    lines.append(f"### 提及 {rank}（提到：{'、'.join(games_in)}，"
+                                 f"原文第 {segs[i0]['line_start']}–"
+                                 f"{segs[i1]['line_start']} 行）")
+                    lines.append("")
+                    for i in range(i0, i1 + 1):
+                        s = segs[i]
+                        who = {"author": "作者", "teammate": "队友"}.get(
+                            s["speaker"], s["speaker"])
+                        mark = " ←" if any(j[0] == i for j in m) else ""
+                        lines.append(f"- [{who}] {s['text']}{mark}")
+                    lines.append("")
 
         out = cfg.exports_dir / \
             f"moment_candidates-{datetime.date.today():%Y%m%d}.md"
