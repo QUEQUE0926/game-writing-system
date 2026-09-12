@@ -492,6 +492,13 @@ def run_from_json(path: str, todo: list, out_dir: Path, today: str,
                        + (c.get("ai_web")
                           or "无外部核验项（未通过逐字锁，优先回查原文）"),
                        "- 人工结论：（待填写）", ""]
+        n_total = len(entries)
+        hc += ["---", "",
+               f"提交状态：（待填写）", "",
+               f"> 完成标准：{n_total} 条「人工结论」全部填上、"
+               "本行改成「已填写」。"
+               "验证方法：文件里搜「（待填写）」应为 0 处；"
+               "AI 归档前会按此检查，不通过不改名归档。", ""]
         (out_dir / f"human_check-{game}-{ver}-{today}.md").write_text(
             "\n".join(hc), encoding="utf-8")
     if not hc_groups:
