@@ -48,3 +48,23 @@ Repository permissions → **Contents: Read and write** → Update。
 看一眼代理客户端（clash/v2ray 之类）当前的**混合/HTTP 端口**是多少，告诉 AI 改仓库配置：
 `git config http.proxy http://127.0.0.1:<新端口>` + `git config https.proxy http://127.0.0.1:<新端口>`，
 或者把代理客户端的端口改回 7890。改好后 `GIT_TERMINAL_PROMPT=0 git push` 即可。
+
+---
+
+# 阻塞：Clash Mi 在跑但代理核心没监听，dev 推送被阻（2026-09-13）
+
+## 现象
+- `git push` 连续 2 次失败：`Failed to connect to github.com:443 over proxy 127.0.0.1:7890`（仓库配置指向 7890，HANDOFF 坑32 预判过端口会变）。
+- 清代理直连不适用：本网络必须走代理（上次 09-12 已实测直连 443 挂起）。
+
+## 诊断（只读检查）
+- `netstat`：127.0.0.1:7890 **无监听**；全机扫描常见代理端口（7890/7891/7892/7897/1080/8888/2080 等）均无。
+- `clashmi.exe`（C:\Program Files\Clash Mi\，PID 13492）在运行，但**没有任何子进程、没有任何监听端口**——界面/托盘活着，代理核心（mihomo/clash 内核）没起来或已被停止。
+
+## 已完成、不受影响的部分
+- 本次改动已本地 commit（dev 分支 e85d3bb：cards-state 文件名加游戏名，坑46根治，verify 七步全 PASS），数据安全，只是没推上云端。
+
+## 待用户操作
+打开 Clash Mi，确认代理已**启动**（不是只开了界面），看一眼当前**混合端口/HTTP 端口**是多少：
+- 如果端口就是 7890：启动代理后 `GIT_TERMINAL_PROMPT=0 git push` 即可；
+- 如果端口变了：告诉 AI 新端口，改仓库配置 `git config http.proxy http://127.0.0.1:<新端口>` + `git config https.proxy http://127.0.0.1:<新端口>` 再推。
