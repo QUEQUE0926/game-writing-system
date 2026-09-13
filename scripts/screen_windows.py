@@ -30,6 +30,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 
 from gws.config import load_config  # noqa: E402
 from gws.db import connect  # noqa: E402
+from gws.report_prune import prune_dated_reports  # noqa: E402
 
 # ---- 规则面（对应素材卡提示词的四类目标）----
 CUES_POS = re.compile(
@@ -325,6 +326,10 @@ def main() -> None:
 
         index_path = out_dir / f"索引-{today}.md"
         index_path.write_text("\n".join(index), encoding="utf-8")
+        pruned = prune_dated_reports(out_dir, ["索引-{date}.md",
+                                               "*-筛选-{date}.md"], today)
+        if pruned:
+            print(f"清理旧报告 {len(pruned)} 份：{'、'.join(pruned)}")
         print(f"筛选完成：{len(by_gv)} 个游戏+版本，窗口 {len(windows_out)} 个"
               f"（入围门槛 {MIN_SCORE} 分）")
         print(f"报告：{index_path}")

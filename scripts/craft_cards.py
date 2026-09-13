@@ -40,6 +40,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 
 from gws.config import load_config  # noqa: E402
+from gws.report_prune import prune_dated_reports  # noqa: E402
 
 LLM_URL = os.environ.get("GWS_LLM_URL", "http://localhost:11434")
 LLM_MODEL = os.environ.get("GWS_LLM_MODEL",
@@ -612,6 +613,11 @@ def render_outputs(cards_out: list, human_check: list, todo: list,
     (out_dir / f"cards-state-{today}.json").write_text(
         json.dumps({"cards": cards_out, "human_check": human_check},
                    ensure_ascii=False, indent=1), encoding="utf-8")
+    pruned = prune_dated_reports(out_dir, [
+        "《*》素材卡草稿（*）-{date}.md", "human_check-*-{date}.md",
+        "human_check-{date}.md", "cards-state-{date}.json"], today)
+    if pruned:
+        print(f"清理旧报告 {len(pruned)} 份：{'、'.join(pruned)}")
     print(f"=== 完成：合格卡 {len(cards_out)} 张，逐字锁拦下 "
           f"{len(human_check)} 条进 human_check")
     for f in written:

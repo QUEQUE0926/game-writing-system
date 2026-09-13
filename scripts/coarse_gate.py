@@ -32,6 +32,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 
 from gws.config import load_config  # noqa: E402
+from gws.report_prune import prune_dated_reports  # noqa: E402
 
 OLLAMA_URL = "http://localhost:11434"
 JUDGE_MODEL = "qwen3:4b-instruct-2507-q4_K_M"
@@ -241,6 +242,10 @@ def main() -> None:
 
     index_path = out_dir / f"粗判索引-{today}.md"
     index_path.write_text("\n".join(index), encoding="utf-8")
+    pruned = prune_dated_reports(out_dir, ["粗判索引-{date}.md",
+                                           "*-粗判-{date}.md"], today)
+    if pruned:
+        print(f"清理旧报告 {len(pruned)} 份：{'、'.join(pruned)}")
     ts = [0]
     print(f"\n=== 完成：KEEP {len(keep)} / MAYBE {len(maybe)} / "
           f"DROP或失败 {len(drop)}")
