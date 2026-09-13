@@ -1,6 +1,6 @@
 # -*- coding: utf-8 -*-
-"""素材卡写库：把 craft_cards 产出的 cards-state-<日期>.json 导入
-material_cards + material_card_evidence（+ audit_log）。
+"""素材卡写库：把 craft_cards 产出的 cards-state-《游戏名》-<日期>.json
+导入 material_cards + material_card_evidence（+ audit_log）。
 
 前置：卡片草稿已通过人工审核、human_check 已回填归档（05 文档流程）。
 本脚本只做机械写入与证据绑定，不做任何改写。
@@ -49,9 +49,14 @@ def norm(s: str) -> str:
 
 
 def find_state_file(cfg) -> Path:
-    files = sorted((cfg.exports_dir / "cards").glob("cards-state-*.json"))
+    # 文件名带游戏名，同日期可能有多份；按修改时间取最新（中文名排序≠时间）
+    files = sorted((cfg.exports_dir / "cards").glob("cards-state-*.json"),
+                   key=lambda p: p.stat().st_mtime)
     if not files:
         raise SystemExit("找不到 cards-state-*.json，先跑 craft_cards.py")
+    if len(files) > 1:
+        print(f"! 目录下有多份 cards-state（{len(files)} 份），取最新："
+              f"{files[-1].name}；要导别的批次请加 --file <路径>")
     return files[-1]
 
 

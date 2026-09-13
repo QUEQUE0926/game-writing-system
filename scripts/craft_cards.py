@@ -5,7 +5,8 @@
 产出：
 - 卡片草稿 卡片草稿-<日期>.md（按用户素材卡提示词的格式，进"待人工审核"）；
 - human_check-<日期>.md（程序锁不过、需要人工回查的条目）；
-- cards-state-<日期>.json（原始卡 JSON，供后续打分/关联用）。
+- cards-state-《游戏名》-<日期>.json（原始卡 JSON，按游戏各一份，同日期
+  多游戏互不覆盖，供后续打分/关联/写库用）。
 
 程序锁（模型无权填的字段）：
 - 证据位置：程序从窗口锚点直接带出（游戏/集/行号）；
@@ -694,13 +695,27 @@ def render_outputs(cards_out: list, human_check: list, todo: list,
         fname = f"《{game}》素材卡骨架清单（{ver}）-{today}.md"
         (out_dir / fname).write_text("\n".join(md), encoding="utf-8")
         written.append(fname)
-    (out_dir / f"cards-state-{today}.json").write_text(
-        json.dumps({"cards": cards_out, "human_check": human_check,
-                    "skeletons": skeleton_out},
-                   ensure_ascii=False, indent=1), encoding="utf-8")
+    # cards-state 原始卡 JSON：按游戏各写一份（文件名带游戏名，同日期
+    # 多游戏互不覆盖——坑46教训）；整轮空跑（无任何游戏）才退回旧式单文件
+    state_games = sorted({it["window"]["game"] for it in cards_out} |
+                         {it["window"]["game"] for it in human_check} |
+                         {it["window"]["game"] for it in skeleton_out})
+    if not state_games:
+        state_games = [""]
+    for g in state_games:
+        def _in(group):
+            return [it for it in group
+                    if it["window"]["game"] == g] if g else group
+        gtag = f"《{g}》" if g else ""
+        (out_dir / f"cards-state-{gtag}-{today}.json").write_text(
+            json.dumps({"cards": _in(cards_out),
+                        "human_check": _in(human_check),
+                        "skeletons": _in(skeleton_out)},
+                       ensure_ascii=False, indent=1), encoding="utf-8")
     pruned = prune_dated_reports(out_dir, [
         "《*》素材卡草稿（*）-{date}.md", "human_check-*-{date}.md",
-        "human_check-{date}.md", "cards-state-{date}.json",
+        "human_check-{date}.md", "cards-state-*-{date}.json",
+        "cards-state-{date}.json",
         "《*》素材卡骨架清单（*）-{date}.md"], today)
     if pruned:
         print(f"清理旧报告 {len(pruned)} 份：{'、'.join(pruned)}")

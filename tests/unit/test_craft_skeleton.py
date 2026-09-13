@@ -73,7 +73,7 @@ class TestTwoStage(unittest.TestCase):
         craft = _load_craft()
         craft.run_from_json(str(self.json_path), self.todo,
                             self.out_dir, "20260913", self.cfg)
-        state = json.loads((self.out_dir / "cards-state-20260913.json")
+        state = json.loads((self.out_dir / "cards-state-《游戏甲》-20260913.json")
                            .read_text(encoding="utf-8"))
         self.assertEqual(len(state["cards"]), 1)
         self.assertEqual(state["cards"][0]["card"]["subject"], "完整卡")
@@ -98,7 +98,7 @@ class TestTwoStage(unittest.TestCase):
                                   encoding="utf-8")
         craft.run_from_json(str(self.json_path), self.todo,
                             self.out_dir, "20260913", self.cfg)
-        state = json.loads((self.out_dir / "cards-state-20260913.json")
+        state = json.loads((self.out_dir / "cards-state-《游戏甲》-20260913.json")
                            .read_text(encoding="utf-8"))
         self.assertEqual(len(state["skeletons"]), 0)
         self.assertEqual(len(state["human_check"]), 1)
@@ -110,7 +110,7 @@ class TestTwoStage(unittest.TestCase):
                                   encoding="utf-8")
         craft.run_from_json(str(self.json_path), self.todo,
                             self.out_dir, "20260913", self.cfg)
-        state = json.loads((self.out_dir / "cards-state-20260913.json")
+        state = json.loads((self.out_dir / "cards-state-《游戏甲》-20260913.json")
                            .read_text(encoding="utf-8"))
         self.assertEqual(len(state["cards"]), 1)
         self.assertEqual(state["skeletons"], [])

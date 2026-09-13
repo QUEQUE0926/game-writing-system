@@ -82,7 +82,7 @@
 **没有卡点。正在等用户验收两批 B 路手写+联网核验卡（或指出要改的卡）。**
 
 - **dev 库现有 4 个源**：《灰烬之国》正式版 666 句 + 8月更新 515 句、《命运之手》2325 句、《零秒：时光的归途》1481 句（旧 29 源数据 09-12 已清，这四个都是之后重新导入的）。
-- **A 路 81 张机器卡已按用户拍板弃掉**（"走个B路"）。卡片原始数据 = `data/dev/exports/cards/cards-state-20260913.json`（注意：同日期跨游戏会互相覆盖，**灰烬 52 卡完整 state 备份在 `data/dev/tmp/cards-state-20260913.backup-灰烬52卡.json`**）。
+- **A 路 81 张机器卡已按用户拍板弃掉**（"走个B路"）。卡片原始数据在 `data/dev/exports/cards/cards-state-《命运之手》-20260913.json`（按游戏分文件新格式，见坑46）；**灰烬 52 卡 state 因是修复前产出、只有 tmp 备份：`data/dev/tmp/cards-state-20260913.backup-灰烬52卡.json`**。
 - **B 路·灰烬之国 52 卡已产出**（会话 AI 精读 25 窗手写 → 联网核验 → `--from-json` 渲染，逐字锁 0 拦截）：
   - 《灰烬之国》素材卡草稿（正式版）26 卡（高2/中20/低4）+ human_check 3 条
   - 《灰烬之国》素材卡草稿（8月更新）26 卡（高2/中20/低4）+ human_check 3-4 条
@@ -101,7 +101,7 @@
 
 ## 四、下一步计划（主线）
 
-1. **用户验收两批 B 路卡（灰烬 52 + 命运之手 26）+ 回填 human_check**（逐卡勾 采用/删除，改提交状态；命运之手 human_check 4 条：前作信息、等级30/32、CE合规×2）。验收通过 → 改名归档（05 流程）→ `import_cards.py --apply` 写库（注意 cards-state 已被命运之手覆盖，写灰烬要用 tmp 备份恢复或分批）。
+1. **用户验收两批 B 路卡（灰烬 52 + 命运之手 26）+ 回填 human_check**（逐卡勾 采用/删除，改提交状态；命运之手 human_check 4 条：前作信息、等级30/32、CE合规×2）。验收通过 → 改名归档（05 流程）→ `import_cards.py --apply` 写库：命运之手用 exports 下的 `cards-state-《命运之手》-20260913.json`，灰烬用 `--file data/dev/tmp/cards-state-20260913.backup-灰烬52卡.json`（坑46：修复前的旧批次只剩这份备份）。
 2. **零秒铺量**：coarse_gate --game 零秒 → B 路两段式产卡（流程同命运之手：粗判→精读→骨架全量+精写中高→建/复用 web_facts 档案→渲染→验收）。
 3. **跨游戏关联（方案已定案写入 05，待实现）**：①玩家明说他游→当场画线（只关联本地库游戏；灰烬的「植物大战僵尸」提及卡已登记，待该游戏入库补线）；②内容相似 embedding 复测（第二个游戏产卡后）；③联网联想提前到素材卡阶段。落地顺序：验收写库 → 新游戏产卡（带信号1）→ embedding 复测 → 联网联想。
 4. **体检命令③（用户提过，未做）**：扫全库空壳版本/近似版本/重复内容出体检报告。要做先出方案。
@@ -161,7 +161,9 @@
 43. **import_guard 阈值教训**：difflib 相似度阈值 0.6 拦不住「8月更新/8跟新」（实际 0.571），定 0.5；差异全数字（V1→V2）排除以免误报正常版本递进。
 44. **全库跑 screen_windows 会影响所有游戏**：它会重建全部已分类源的窗口并清理旧筛选报告；只想跑一个游戏加 `--game <名>`。
 45. **web_facts 档案是纯 JSON 不是 Python（09-13 踩过）**：多行结论不能写相邻字符串隐式拼接（Python 习惯带进了 .json，第 10 行就炸）→ 档案读取失败、自动挂载整批跳过（有容错只告警，26 张卡全裸渲染完才发现）。写完档案必须 `json.load` 验证后再跑渲染。
-46. **cards-state-<日期>.json 同日期跨游戏互相覆盖**（09-13 踩过）：第二个游戏渲染前先把上一个游戏的 cards-state cp 到 tmp 备份（灰烬 52 卡备份=`data/dev/tmp/cards-state-20260913.backup-灰烬52卡.json`），否则写库时丢上一游戏的卡数据。
+46. **cards-state-<日期>.json 同日期跨游戏互相覆盖**（09-13 踩过）：文件名只有日期没有游戏名，第二个游戏同日渲染直接覆盖第一个。
+  **已修复（同日）**：craft_cards 改为按游戏各写一份 `cards-state-《游戏名》-<日期>.json`（整轮空跑才退回旧式单文件）；import_cards 的"取最新"改用修改时间排序（中文名排序≠时间），多份并存时打印提醒可用 --file 指定；report_prune 新旧模式都登记。三个单测同步更新，verify 七步全 PASS。
+  **遗留**：09-13 当天已被覆盖的灰烬 52 卡 state 仍只有 tmp 备份一份（见下条），写库前照旧恢复。
 47. **dump 转存文件与 readlist jsonl 可能不同步**（09-13 踩过）：逐字锁只认 readlist jsonl（如 E13 行1626 dump 是"通往通往"、jsonl 是"通往"）；构建器自检必须对着 jsonl 跑，别对着人读用的 txt 转存抄原话。
 48. **unittest 直接 discover 找不到 gws 包**：必须 `PYTHONPATH=src`（verify.py 会自动带，手工跑单测别忘）。
 50. **--from-json 卡源 JSON 格式（09-13 重跑踩过）**：craft_cards 期望顶层是 `list`（不是 `{"items": [...]}`），每项含 `episode_title`/`window_line_start`（窗口起始行，不是 quote 所在行）/`cards`/`skeletons`；卡字段名是 `subject/detail/feeling/analysis`（不是五段式 observation 等），五维分数 `help/concrete/delta/unique/writing` 必须展平到顶层（不是 `scores` 字典），`tags`/`usage`→`use`。构建器必须先按窗口分组再送渲染。
