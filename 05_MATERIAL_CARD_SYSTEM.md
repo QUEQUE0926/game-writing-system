@@ -92,6 +92,15 @@ AI 可建议，作者确认优先级高于模型评分。
    由会话 AI 直读窗口手写卡，走 `--from-json` 模式（卡源 JSON 如
    `data/dev/tmp/my_cards.json`），将来接联网强模型只改
    GWS_LLM_URL / GWS_LLM_MODEL 环境变量。
+4. **写库** `scripts/import_cards.py`（2026-09-13 新增）：把
+   `cards-state-<日期>.json` 导入 material_cards + material_card_evidence
+   （+ audit_log）。默认 dry-run，`--apply` 才落库。字段映射固定
+   （detail→observation、feeling→experience、analysis→interpretation、
+   judge_reason→judgement、concrete→evidence_strength、writing→
+   writing_value、help→author_interest、unique→reuse_value，映射记入
+   audit_log）；证据绑定=原话去空白后在窗口行区间内的 segments 逐字命中，
+   命中 0 条拒绝入库；同 episode+同 quote 幂等跳过。前置条件=卡片草稿
+   人工审核通过、human_check 回填归档。
 
 ### 程序锁（模型无权填的字段）
 
