@@ -126,6 +126,8 @@ def cmd_auto_import(env: str, dry_run: bool) -> int:
             tag = "去重跳过" if r["dedup"] else f"{r['segments']} 个 Segment"
             print(f"  {r['file']}  →  {series}游戏[{r['game']}] "
                   f"版本[{r['version']}] source={r['source_id']}  {tag}")
+            for w in r.get("warnings") or []:
+                print(f"      ⚠ {w}")
         return 0
     finally:
         conn.close()
@@ -255,6 +257,8 @@ def cmd_import_files(env: str, series: str | None, files: list[str]) -> int:
             tag = "去重跳过" if r["dedup"] else f"{r['segments']} 个 Segment"
             print(f"  {r['file']}  →  {series_txt}游戏[{r['game']}] "
                   f"版本[{r['version']}] source={r['source_id']}  {tag}")
+            for w in r.get("warnings") or []:
+                print(f"      ⚠ {w}")
         return 0
     finally:
         conn.close()

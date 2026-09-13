@@ -14,11 +14,13 @@
 """
 from __future__ import annotations
 
+import hashlib
 import re
 import sqlite3
 from pathlib import Path
 
 from .config import Config
+from .import_guard import cross_version_dup, version_name_suspects
 from .import_service import import_source
 from .repositories import GameRepository, SeriesRepository, VersionRepository
 
@@ -165,6 +167,25 @@ def _game_series(conn: sqlite3.Connection, cfg: Config, game_id: str) -> str:
     return SeriesRepository(conn, cfg).create(row["name"])
 
 
+def _guard_warnings(conn: sqlite3.Connection, game_id: str, ver_name: str,
+                    sha: str, ver_id: str | None) -> list[str]:
+    """导入防线①②（import_guard）：版本名相似 + 同内容跨版本，只提醒不拦截。"""
+    warnings = []
+    if ver_id is None:
+        sus = version_name_suspects(conn, game_id, ver_name)
+        if sus:
+            warnings.append(
+                "版本名《{}》与现有版本{}名字很像，若是手误请改名后再导"
+                "（本次已按新名字建档）".format(
+                    ver_name, "、".join(f"《{s}》" for s in sus)))
+    dups = cross_version_dup(conn, game_id, sha, exclude_version_id=ver_id)
+    if dups:
+        warnings.append(
+            "文件内容与该游戏版本{}的实况完全相同，可能重复导入".format(
+                "、".join(f"《{d}》" for d in dups)))
+    return warnings
+
+
 def import_files(cfg: Config, conn: sqlite3.Connection, paths: list[str],
                  series: str | None = None) -> dict:
     """导入任意路径的 txt（拖放入口用）。文件名解析规则与 auto_import 相同。
@@ -190,14 +211,19 @@ def import_files(cfg: Config, conn: sqlite3.Connection, paths: list[str],
         names = conn.execute(
             "SELECT (SELECT name FROM series WHERE id=?), "
             "(SELECT name FROM games WHERE id=?)", (series_id, game_id)).fetchone()
-        ver_id = _find_version(conn, game_id, ver_name) \
-            or VersionRepository(conn, cfg).create(game_id, ver_name)
+        ver_id = _find_version(conn, game_id, ver_name)
+        warnings = _guard_warnings(
+            conn, game_id, ver_name,
+            hashlib.sha256(path.read_bytes()).hexdigest(), ver_id)
+        if ver_id is None:
+            ver_id = VersionRepository(conn, cfg).create(game_id, ver_name)
         r = import_source(cfg, ver_id, path)
         results.append({"file": path.name, "series": names[0],
                         "game": names[1], "version": ver_name,
                         "game_id": game_id, "version_id": ver_id,
                         "source_id": r["source_id"],
-                        "segments": r["segments"], "dedup": r["dedup"]})
+                        "segments": r["segments"], "dedup": r["dedup"],
+                        "warnings": warnings})
     return {"dry_run": False, "results": results}
 
 
@@ -236,12 +262,17 @@ def auto_import(cfg: Config, conn: sqlite3.Connection,
         names = conn.execute(
             "SELECT (SELECT name FROM series WHERE id=?), "
             "(SELECT name FROM games WHERE id=?)", (series_id, game_id)).fetchone()
-        ver_id = _find_version(conn, game_id, p["version"]) \
-            or versions.create(game_id, p["version"])
+        ver_id = _find_version(conn, game_id, p["version"])
+        warnings = _guard_warnings(
+            conn, game_id, p["version"],
+            hashlib.sha256(p["path"].read_bytes()).hexdigest(), ver_id)
+        if ver_id is None:
+            ver_id = versions.create(game_id, p["version"])
         r = import_source(cfg, ver_id, p["path"])
         results.append({**{k: v for k, v in p.items() if k != "path"},
                         "series": names[0], "game": names[1],
                         "game_id": game_id, "version_id": ver_id,
                         "source_id": r["source_id"],
-                        "segments": r["segments"], "dedup": r["dedup"]})
+                        "segments": r["segments"], "dedup": r["dedup"],
+                        "warnings": warnings})
     return {"dry_run": False, "results": results}

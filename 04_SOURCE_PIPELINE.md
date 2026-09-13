@@ -25,6 +25,16 @@ Source → Normalize → Segment → Speaker / Content Classification → Episod
 - 生成标准 UTF-8 派生文本
 - Raw 不覆盖
 
+## 导入防线（2026-09-13 用户拍板①②，`gws.import_guard`）
+
+只提醒、不拦截，三处共用（拖放弹窗预告 / CLI 输出 / auto_import 结果）：
+
+- **① 版本名相似提醒**：新建版本时，同游戏下已有名字高度相似
+  （互相包含，或相似度 ≥0.5 且差异不全是数字——V1→V2 这类正常
+  递进不提醒）的现有版本 → 警告手误可能（如已有「8月更新」要建「8跟新」）。
+- **② 同内容跨版本提醒**：文件 sha256 与该游戏另一版本下已有实况
+  完全相同 → 警告可能重复导入。
+
 ## Segment
 
 必须拥有稳定定位字段，例如 source_id + line range / ordinal。

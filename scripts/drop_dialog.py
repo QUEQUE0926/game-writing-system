@@ -32,9 +32,10 @@ def _strip_suffix(s: str) -> str:
     return _SUFFIX_RE.sub("", s).strip()
 
 from gws.auto_import import (  # noqa: E402
-    _resolve_target, build_target_name, parse_stem)
+    _guard_warnings, _resolve_target, build_target_name, parse_stem)
 from gws.config import load_config  # noqa: E402
 from gws.db import connect  # noqa: E402
+from gws.import_guard import cross_version_dup, version_name_suspects  # noqa: E402
 from gws.import_service import import_source  # noqa: E402
 from gws.migrations import migrate  # noqa: E402
 from gws.repositories import (GameRepository, SeriesRepository,  # noqa: E402
@@ -129,13 +130,13 @@ def preview_target(conn, path: Path, series: str, game: str,
         lines.append(f"版本《{version}》：将随新建的游戏一并新建")
         return lines
     if grow:
+        sha = hashlib.sha256(path.read_bytes()).hexdigest()
         vrow = _db_lookup(
             conn,
             "SELECT id FROM game_versions WHERE game_id=? AND name=? "
             "AND status!='trashed'", (grow["id"], version))
         if vrow:
             lines.append(f"版本《{version}》：该游戏下已有，将归入")
-            sha = hashlib.sha256(path.read_bytes()).hexdigest()
             dup = _db_lookup(
                 conn, "SELECT id FROM sources WHERE version_id=? AND sha256=?",
                 (vrow["id"], sha))
@@ -147,6 +148,18 @@ def preview_target(conn, path: Path, series: str, game: str,
                              "（撞名自动标 #2、#3）")
         else:
             lines.append(f"版本《{version}》：该游戏下不存在，将新建")
+            sus = version_name_suspects(conn, grow["id"], version)
+            if sus:
+                lines.append("⚠ 现有版本"
+                             + "、".join(f"《{s}》" for s in sus)
+                             + "与新名字很像，确定不是手误？")
+        others = cross_version_dup(conn, grow["id"], sha,
+                                   exclude_version_id=vrow["id"]
+                                   if vrow else None)
+        if others:
+            lines.append("⚠ 内容与该游戏另一版本"
+                         + "、".join(f"《{o}》" for o in others)
+                         + "的实况完全相同，可能重复导入")
     return lines
 
 
@@ -281,11 +294,16 @@ def import_one(cfg, conn, path: Path, series: str, game: str,
     ver_row = conn.execute(
         "SELECT id FROM game_versions WHERE game_id=? AND name=? "
         "AND status!='trashed' LIMIT 1", (game_id, version)).fetchone()
+    warnings = _guard_warnings(
+        conn, game_id, version,
+        hashlib.sha256(path.read_bytes()).hexdigest(),
+        ver_row["id"] if ver_row else None)
     ver_id = ver_row["id"] if ver_row else versions.create(game_id, version)
     r = import_source(cfg, ver_id, path)
     return {"file": path.name, "series": series, "game": actual_game,
             "version": version, "source_id": r["source_id"],
-            "segments": r["segments"], "dedup": r["dedup"]}
+            "segments": r["segments"], "dedup": r["dedup"],
+            "warnings": warnings}
 
 
 def _discard_copy(target: Path, lines: list[str]) -> None:
@@ -375,6 +393,8 @@ def main() -> int:
                     else f"新增 {r['segments']} 个 Segment（原文已归档到 raw/）"
                 lines.append(f"✔ {r['file']}  →  系列[{r['series']}] "
                              f"游戏[{r['game']}] 版本[{r['version']}]\n    {tag}")
+                for w in r.get("warnings") or []:
+                    lines.append(f"    ⚠ {w}")
                 _discard_copy(target, lines)
             except ValidationError as e:
                 lines.append(f"✘ {target.name}\n    校验失败: {e}"
