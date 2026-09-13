@@ -77,7 +77,7 @@
 ### 写库器
 - `scripts/import_cards.py`（2026-09-13）：`cards-state-<日期>.json` → material_cards + material_card_evidence + audit_log。默认 dry-run，`--apply` 落库。字段映射固定（detail→observation、feeling→experience、analysis→interpretation、judge_reason→judgement、concrete→evidence_strength、writing→writing_value、help→author_interest、unique→reuse_value）；证据=原话去空白后在窗口行区间 segments 逐字命中，命中 0 条拒绝入库；同 episode+同 quote 幂等跳过。
 
-## 三、当前状态（2026-09-13 收工：灰烬之国 52 卡 + 命运之手 26 卡待用户验收，A 路 81 卡已弃）
+## 三、当前状态（2026-09-13 收工：灰烬之国 52 卡 + 命运之手 26 卡待用户验收，计时功能已落地）
 
 **没有卡点。正在等用户验收两批 B 路手写+联网核验卡（或指出要改的卡）。**
 
@@ -87,19 +87,17 @@
   - 《灰烬之国》素材卡草稿（正式版）26 卡（高2/中20/低4）+ human_check 3 条
   - 《灰烬之国》素材卡草稿（8月更新）26 卡（高2/中20/低4）+ human_check 3-4 条
   - 卡源 JSON `data/dev/tmp/my_cards.json`（构建器 `data/dev/tmp/build_b_cards.py`，内含 quote 逐字自检，可复跑）
-- **B 路·命运之手 26 卡 + 44 骨架（09-13 产出，同日已按用户要求删除）**：粗判 28 窗（15KEEP+13MAYBE）→
-  会话 AI 精读全窗 → 两段式手写（26 精写卡：高5/中21 + 44 骨架全窗覆盖）→
-  新建 `data/dev/web_facts/命运之手.json`（8 facts+1 community，当日重核）→ 渲染自动挂载 18 条 →
-  逐字锁 0 拦截。用户要求清掉这批产物（原因未说明，可能重做），**已删**：三份报告+
-  cards-state+粗判/筛选报告+tmp 构建器与精读转存。**保留**：web_facts 档案（联网核验成果，
-  重做可复用）、readlist/gate-state 中间件（规矩不碰）、灰烬 cards-state 备份（tmp）。
-  重建卡片需重跑：精读在断线后需重读（read_windows_ms.txt 已删）。当时的批次概况：
-  human_check 4 条（前作无信号、等级30/32、CE合规×2）；敏感卡处理（商单口径/CE隔离/开挂比喻义）
-  和职业反转卡组（E07→E18→E20→E21）的设计在 05 与坑 45-48 仍有记录。
+- **B 路·命运之手 26 卡 + 34 骨架（09-13 带计时重跑版）**：
+  - 粗判 28 窗（KEEP16+MAYBE12，缓存命中瞬时完成）→ 精读复读 244s → 手写 462s（26 精写：高15/中11 + 34 骨架：中14/低20）→ 渲染 0.0s（自动挂载 7 条，逐字锁 0 拦截）
+  - 产出：`data/dev/exports/cards/《命运之手》素材卡草稿（default）-20260913.md` + `《命运之手》素材卡骨架清单（default）-20260913.md`
+  - 卡源 JSON `data/dev/tmp/hof_cards_grouped.json`（构建器 `data/dev/tmp/build_hof_cards.py`，从 `read_windows_ms.txt` 重建窗口文本做逐字锁）
+  - **计时记录**：`data/dev/logs/timing-命运之手-20260913.jsonl`
+  - **注意**：原 44 骨架中 10 条因与精写卡重复或窗口匹配问题未纳入，实际 34 条。
 - **联网核验（2026-09-13 当日全重核）·灰烬之国**：商店页 API（名/开发商发行商/EA日期/价¥68当日无折扣）；新闻 API（最新补丁仍 V0.6.11b 8月25日，此后无新补丁）；**官方成就页三枚彩蛋**：「植物大战僵尸」=塞弗林的水壶、「小心！别照镜子！」=美杜莎之眼、「一个都别想跑！」=打地鼠5000分、「斩尽荆棘」=击败塞弗琳；Gamemag.ru 报道 V0.6.10「Isdra」重做。社区佐证沿用小黑盒 665862 话题缓存（09-08~09-12 帖）。转人工（human_check）：EA期约12个月无出处、难度与角色绑定无官方说明、修改器合规性存疑、德鲁伊事件bug无公告、炮手被削无信号。
 - **联网核验·命运之手**：商店 API（《命运之手：人各有命》Hand of Fate: Hordes，appid 3075410，Spitfire Interactive 开发/Spicy Koala 发行，2026-07-22 EA ¥48 当日无折扣）；v0.1『Loading and Loadout』补丁公告（2026-09-09，自动存档/loadout 系统/神社少女遭遇令牌分支，逐字片段齐）；官方成就页 24 条全量逐字；小黑盒 0 命中已停链路。
+- **计时功能（2026-09-13 落地，commit 4cda26c）**：`src/gws/pipeline_timing.py` + `scripts/timing.py`，三个产线脚本（筛窗/粗判/产卡）自动记录各阶段耗时。命运之手重跑实测：筛窗 0.1s → 粗判 0.0s（缓存）→ 核验 0.0s（档案复用）→ 精读 244s → 手写 462s → 渲染 0.0s，合计约 706s（11.8 分钟）。
 - **零秒：时光的归途**：已筛窗，**未粗判未制卡**。
-- **最新 commit**：本会话末见 git log；近期：`d202351`（HANDOFF 交接重写）、`24c9f24`（导入防线）、`ee6647d`（报告自动清理）、`eaabbcd`（craft_cards 双轨修复）。
+- **最新 commit**：`4cda26c`（计时功能：pipeline_timing.py + timing.py + 三脚本接入 + 5 单测，verify 七步全 PASS 已推送）。
 
 ## 四、下一步计划（主线）
 
@@ -166,7 +164,8 @@
 46. **cards-state-<日期>.json 同日期跨游戏互相覆盖**（09-13 踩过）：第二个游戏渲染前先把上一个游戏的 cards-state cp 到 tmp 备份（灰烬 52 卡备份=`data/dev/tmp/cards-state-20260913.backup-灰烬52卡.json`），否则写库时丢上一游戏的卡数据。
 47. **dump 转存文件与 readlist jsonl 可能不同步**（09-13 踩过）：逐字锁只认 readlist jsonl（如 E13 行1626 dump 是"通往通往"、jsonl 是"通往"）；构建器自检必须对着 jsonl 跑，别对着人读用的 txt 转存抄原话。
 48. **unittest 直接 discover 找不到 gws 包**：必须 `PYTHONPATH=src`（verify.py 会自动带，手工跑单测别忘）。
-49. **别再提"跳过低窗/砍低骨架"（09-13 用户明确否了）**：用户拍板的红线是「精读不跳窗、低价值=降级存档不丢弃、翻盘在验收」（05 两段式配套红线两条）。想压缩时间走别的路（档案复用/骨架已落地），走"事前扔料"这条路会被否。
+50. **--from-json 卡源 JSON 格式（09-13 重跑踩过）**：craft_cards 期望顶层是 `list`（不是 `{"items": [...]}`），每项含 `episode_title`/`window_line_start`（窗口起始行，不是 quote 所在行）/`cards`/`skeletons`；卡字段名是 `subject/detail/feeling/analysis`（不是五段式 observation 等），五维分数 `help/concrete/delta/unique/writing` 必须展平到顶层（不是 `scores` 字典），`tags`/`usage`→`use`。构建器必须先按窗口分组再送渲染。
+51. **精读转存 txt 与 readlist jsonl 的 quote 差异（09-13 重跑踩过）**：重跑时 readlist jsonl 已被清理，只有 `read_windows_ms.txt`；逐字锁必须对着**实际送渲染的窗口数据源**重建（从 txt 按 `===== 窗口标题 =====` 解析），不能假设 jsonl 还在。E21:2673 的 quote 跨了两行（2673+2679），单行 quote 才能逐字命中。
 
 ## 六、验证方式速查
 
