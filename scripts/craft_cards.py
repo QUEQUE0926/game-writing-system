@@ -426,6 +426,25 @@ def run_from_json(path: str, todo: list, out_dir: Path, today: str,
                     k: w.get(k) for k in ("game", "ver", "episode_title",
                                           "line_start", "line_end")}})
 
+    # 核验档案自动挂载（05「核验档案与自动挂载」节）：事实核验按 triggers 关键词
+    # 自动挂到卡上；易变条目过期拒挂并打印当日重核清单，不拿旧缓存当事实
+    from gws import web_facts
+    today_iso = f"{datetime.date.today():%Y-%m-%d}"
+    for game in {it["window"]["game"] for it in cards_out}:
+        game_cards = [it["card"] for it in cards_out
+                      if it["window"]["game"] == game]
+        try:
+            n_att, stale = web_facts.auto_attach(game_cards, game, today_iso,
+                                                 cfg)
+        except Exception as e:  # 档案损坏不阻塞产卡，只告警
+            print(f"! 核验档案读取失败（{game}）：{e}，本次跳过自动挂载")
+            continue
+        if n_att:
+            print(f"自动挂载核验条目：{game} {n_att} 条")
+        for key, last in stale:
+            print(f"! 易变条目需当日重核：{game}/{key}（上次核验 {last}），"
+                  "已跳过挂载")
+
     render_outputs(cards_out, human_check, todo, out_dir, today, cfg)
 
 

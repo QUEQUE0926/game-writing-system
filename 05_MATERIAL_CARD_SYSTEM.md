@@ -216,6 +216,31 @@ AI 可建议，作者确认优先级高于模型评分。
   反证/无信号/无法验证项自动进 human_check 待人工清单。
 - 「联网策略」仍只用四值枚举：重点联网/条件联网/顺带核对/不联网。
 
+#### 核验档案与自动挂载（2026-09-13 用户拍板落地）
+
+**动机**：B 路慢的一半在重复核验——不变的事实（游戏名/角色名/成就名等）每张卡
+手工挂一遍。改为「核过一次、存档复用、自动挂载」。
+
+- **档案位置**：`data/<env>/web_facts/<游戏名>.json`（跟环境走、不进 git、
+  不动数据库表）。`facts`（事实核验，三件套齐全）+ `community`
+  （社区佐证，供人工挑选）。
+- **条目字段**：`key/claim/verdict/grade/conclusion/url/snippet/verified_at/
+  volatile/triggers`。`triggers`=触发关键词列表；`volatile=true`=易变条目
+  （价格/补丁/销量等）。
+- **自动挂载**：`craft_cards.py --from-json` 渲染前，`src/gws/web_facts.py`
+  按 triggers 扫卡的主题/细节/感受/分析/原话，命中即挂 fact_check，
+  同 claim 去重；档案损坏只告警不阻塞产卡。**只接 B 路**（--from-json），
+  A 路待强模型升级时再议。
+- **易变红线**：`volatile` 且 `verified_at`≠当日 → **拒挂**并打印
+  「当日重核清单」；会话 AI 当日重核后更新 `verified_at` 再渲染，
+  不拿旧缓存当事实（沿用「联网规矩」时效条）。
+- **社区佐证不自动挂**：配哪条社区参照是编辑判断，保留写卡人手工挑。
+- **卡量收敛线**（构建器自检，报警不硬拦）：同一窗口超过 2 张、
+  全批超过 40 张，列出提醒。
+- **当前档案**：灰烬之国 facts 24 条（volatile 5：ea/patch_aug/
+  patch_drop/cc_immunity/controller_fix）+ community 16 条
+  （2026-09-13 自 52 卡批次蒸馏）。新游戏产卡时从第一张卡开始攒档案。
+
 ### human_check 规矩
 
 - 按游戏+版本拆分，与草稿文件一一对应；每轮全量重写。
