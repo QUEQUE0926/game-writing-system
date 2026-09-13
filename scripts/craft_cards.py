@@ -64,6 +64,20 @@ CARD_SCHEMA = {
                                      "enum": ["反预期", "价值观冲突",
                                               "与常识相反", "自我反转", ""]},
                     "quote": {"type": "string"},
+                    "help": {"type": "integer", "minimum": 0, "maximum": 3},
+                    "concrete": {"type": "integer", "minimum": 0,
+                                 "maximum": 3},
+                    "delta": {"type": "integer", "minimum": 0, "maximum": 3},
+                    "unique": {"type": "integer", "minimum": 0, "maximum": 3},
+                    "writing": {"type": "integer", "minimum": 0,
+                                "maximum": 3},
+                    "judge_reason": {"type": "string"},
+                    "use": {"type": "string"},
+                    "web_strategy": {"type": "string",
+                                     "enum": ["重点联网", "条件联网",
+                                              "顺带核对", "不联网"]},
+                    "related": {"type": "array",
+                                "items": {"type": "string"}},
                 },
                 "required": ["subject", "detail", "feeling", "analysis",
                              "quote"],
@@ -87,6 +101,16 @@ PROMPT = """你是游戏实况素材卡提炼员。从下面的转录片段（�
 - feeling 写玩家当时的感受+判断，analysis 按"体验→设计/原因→观点"写，
   证据不足就写"暂不能形成观点"；
 - tension（张力）只在真的有反直觉/想争辩的点时写，没有就空着，禁止硬凑；
+- help/concrete/delta/unique/writing 各打 0~3 分（整数）：
+  help=对玩家决策的帮助、concrete=细节具体程度（数字/例子/操作）、
+  delta=超出"好玩/烂"套话的新判断、unique=本作特有的程度、
+  writing=改写成文章段落的现成程度（原话张力+结构完整）；
+- judge_reason 一句话说清打分理由；use 写适合文章的哪部分
+  （开头/论点/论据/结尾，可空）；
+- web_strategy 四选一：重点联网（关键事实必须外部核验）/
+  条件联网（涉及版本/补丁/成就等可查事实时联网）/顺带核对/
+  不联网（纯个人体验，无需外部核验）；
+- related：与本窗口其他卡明显相关时填对方主题文本（可空，程序自动解析挂链）；
 - 一段通常 0~3 张卡，宁缺毋滥。
 
 转录内容（第 {ls}–{le} 行）：
@@ -115,6 +139,17 @@ def quote_ok(quote: str, window: dict) -> bool:
             "".join(s["text"] for s in window["sentences"])):
         return False
     return True
+
+
+def quote_speaker(quote: str, w: dict):
+    """原话命中句的说话人分类（程序侧带出，模型无权填）。"""
+    target = norm(quote)
+    acc = ""
+    for s in w["sentences"]:
+        acc += s["text"]
+        if target and target in norm(acc):
+            return s.get("speaker")
+    return None
 
 
 # 联网字段新规矩（05 文档 2026-09-13 修订）：fact_check / community_scan 结构化，
@@ -390,6 +425,16 @@ def run_from_json(path: str, todo: list, out_dir: Path, today: str,
                     k: w.get(k) for k in ("game", "ver", "episode_title",
                                           "line_start", "line_end")}})
 
+    render_outputs(cards_out, human_check, todo, out_dir, today, cfg)
+
+
+def render_outputs(cards_out: list, human_check: list, todo: list,
+                   out_dir: Path, today: str, cfg=None) -> None:
+    """按 05 文档版式渲染全部产出（草稿/human_check 按游戏+版本各一份）。
+
+    LLM 产卡与 --from-json 手写卡共用：稳定卡号、高/中/低分组、门牌行、
+    跨版本挂链、human_check 全量重写 + 提交状态。
+    """
     # 稳定卡号：总分降序、同分按 玩家帮助→判断增量→独特性（规则16）
     def dims(c):
         return (int(c.get("help", 0)), int(c.get("delta", 0)),
@@ -639,59 +684,21 @@ def main() -> None:
               f"/重{gate.get('importance')}）→ {len(valid)} 卡"
               f"，逐字锁拦下 {len(retry)}")
         for c in valid:
+            sp = quote_speaker(c.get("quote", ""), w)
+            if sp and sp != "玩家":
+                c["speaker"], c["speaker_conf"] = sp, "中"
             cards_out.append({"card": c, "window": {
-                k: w.get(k) for k in ("game", "episode_id", "episode_title",
+                k: w.get(k) for k in ("game", "ver", "episode_id",
+                                      "episode_title",
                                       "source_id", "line_start", "line_end",
                                       "density", "score")}})
         for c in retry:
             human_check.append({"card": c, "window": {
-                k: w[k] for k in ("game", "episode_title", "line_start",
+                k: w[k] for k in ("game", "ver", "episode_id",
+                                  "episode_title", "line_start",
                                   "line_end")}})
 
-    # 写草稿（按窗口分组）
-    md = [f"# 素材卡草稿 · {datetime.date.today()}（待人工审核）", "",
-          f"> 模型：{LLM_MODEL}　窗口 {len(todo)}　合格卡 {len(cards_out)}"
-          f"　逐字锁拦下 {len(human_check)}（见 human_check）",
-          "> 卡号是临时展示号，人工审核后再定稳定编号。", ""]
-    no = 0
-    by_w = {}
-    for item in cards_out:
-        key = (item["window"]["game"], item["window"]["episode_title"],
-               item["window"]["line_start"])
-        by_w.setdefault(key, []).append(item["card"])
-    for (game, ep, ls), cs in by_w.items():
-        w = next(w for w in todo if w["game"] == game
-                 and w["episode_title"] == ep and w["line_start"] == ls)
-        md += [f"## {game} · {ep} · 第 {w['line_start']}–{w['line_end']} 行"
-               f"（密度 {w.get('density')}）", ""]
-        for c in cs:
-            no += 1
-            md += render_card(no, c, w)
-    (out_dir / f"卡片草稿-{today}.md").write_text("\n".join(md),
-                                                  encoding="utf-8")
-
-    if human_check:
-        hc = [f"# human_check（待人工填写）· {datetime.date.today()}", "",
-              "> 以下条目的原话未通过逐字校验，需要人工回查原文；"
-              "模型输出仅供线索。", ""]
-        for n, item in enumerate(human_check, 1):
-            c = item["card"]
-            hc += [f"## 条目 {str(n).zfill(2)}",
-                   f"- 窗口：{item['window']['game']} · "
-                   f"{item['window']['episode_title']} · "
-                   f"第 {item['window']['line_start']}–"
-                   f"{item['window']['line_end']} 行",
-                   f"- 模型给的原话：「{c.get('quote', '')}」（未逐字命中）",
-                   f"- 主题线索：{c.get('subject', '')}", ""]
-        (out_dir / f"human_check-{today}.md").write_text(
-            "\n".join(hc), encoding="utf-8")
-
-    (out_dir / f"cards-state-{today}.json").write_text(
-        json.dumps({"cards": cards_out, "human_check": human_check},
-                   ensure_ascii=False, indent=1), encoding="utf-8")
-    print(f"\n=== 完成：合格卡 {len(cards_out)} 张，逐字锁拦下 "
-          f"{len(human_check)} 条进 human_check")
-    print(f"草稿：{out_dir / f'卡片草稿-{today}.md'}")
+    render_outputs(cards_out, human_check, todo, out_dir, today, cfg)
 
 
 if __name__ == "__main__":
