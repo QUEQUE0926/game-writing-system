@@ -394,13 +394,17 @@ def run_from_json(path: str, todo: list, out_dir: Path, today: str,
                   cfg=None) -> None:
     """人工/AI 直接产卡模式：同一套逐字锁与渲染，只是卡由外部 JSON 提供。
 
+    两段式产卡（05「两段式产卡」节）：items[].cards = 完整卡（精写）；
+    items[].skeletons = 骨架（主题/quote/why 三行，逐字锁同样生效），
+    只进骨架清单存档、不进卡候选。骨架要启用时展开成完整卡重跑。
+
     版式按规则16：文件头只有张数概览；完整卡片按 高/中/低 三个二级标题分组，
     组内按总分降序（同分按 玩家帮助→判断增量→独特性 降序）；
     卡号是稳定 ID：本批生成后固定，后续批次顺延，重排只动位置不改号。
     """
     items = json.loads(Path(path).read_text(encoding="utf-8"))
     by_key = {(w.get("source_id"), w["episode_title"], w["line_start"]): w for w in todo}
-    cards_out, human_check = [], []
+    cards_out, human_check, skeleton_out = [], [], []
     for item in items:
         w = by_key.get((item.get("source_id"), item.get("episode_title"),
                         item.get("window_line_start"))) or by_key.get(
@@ -425,6 +429,21 @@ def run_from_json(path: str, todo: list, out_dir: Path, today: str,
                 human_check.append({"card": c, "window": {
                     k: w.get(k) for k in ("game", "ver", "episode_title",
                                           "line_start", "line_end")}})
+        for s in item.get("skeletons", []):
+            qn = norm(s.get("quote", ""))
+            if not qn or qn in seen:
+                continue
+            seen.add(qn)
+            if quote_ok(s.get("quote", ""), w):
+                skeleton_out.append({"skel": s, "window": {
+                    k: w.get(k) for k in (
+                        "game", "ver", "episode_id", "episode_title",
+                        "source_id", "line_start", "line_end")}})
+            else:
+                human_check.append({"card": s, "window": {
+                    k: w.get(k) for k in ("game", "ver", "episode_title",
+                                          "line_start", "line_end")}})
+                print(f"! 骨架逐字锁未过：{s.get('subject', '')}（进 human_check）")
 
     # 核验档案自动挂载（05「核验档案与自动挂载」节）：事实核验按 triggers 关键词
     # 自动挂到卡上；易变条目过期拒挂并打印当日重核清单，不拿旧缓存当事实
@@ -445,15 +464,18 @@ def run_from_json(path: str, todo: list, out_dir: Path, today: str,
             print(f"! 易变条目需当日重核：{game}/{key}（上次核验 {last}），"
                   "已跳过挂载")
 
-    render_outputs(cards_out, human_check, todo, out_dir, today, cfg)
+    render_outputs(cards_out, human_check, todo, out_dir, today, cfg,
+                   skeleton_out)
 
 
 def render_outputs(cards_out: list, human_check: list, todo: list,
-                   out_dir: Path, today: str, cfg=None) -> None:
-    """按 05 文档版式渲染全部产出（草稿/human_check 按游戏+版本各一份）。
+                   out_dir: Path, today: str, cfg=None,
+                   skeleton_out: list | None = None) -> None:
+    """按 05 文档版式渲染全部产出（草稿/human_check/骨架清单 按游戏+版本各一份）。
 
     LLM 产卡与 --from-json 手写卡共用：稳定卡号、高/中/低分组、门牌行、
     跨版本挂链、human_check 全量重写 + 提交状态。
+    skeleton_out（两段式产卡骨架段）：只出骨架清单，不进卡候选、不写库。
     """
     # 稳定卡号：总分降序、同分按 玩家帮助→判断增量→独特性（规则16）
     def dims(c):
@@ -487,7 +509,8 @@ def render_outputs(cards_out: list, human_check: list, todo: list,
             "LEFT JOIN series se ON se.id = g.series_id")}
     finally:
         conn.close()
-    for it in cards_out:
+    skeleton_out = skeleton_out or []
+    for it in cards_out + skeleton_out:
         series, ver = ver_map.get(it["window"]["episode_id"], ("—", "default"))
         it["ver"] = ver
         it["series"] = series
@@ -629,16 +652,48 @@ def render_outputs(cards_out: list, human_check: list, todo: list,
         (out_dir / f"human_check-{today}.md").write_text(
             f"# human_check · {datetime.date.today()}\n\n本轮无待人工条目。\n",
             encoding="utf-8")
+    # 骨架清单（两段式产卡·05 方案一）：三行存档（主题/原话/为什么值得），
+    # 不进卡候选、不写 material_cards；当目录与素材储备，要启用须展开成完整卡
+    sk_groups: dict[tuple, list] = {}
+    for it in skeleton_out:
+        sk_groups.setdefault((it["window"]["game"], it["ver"]), []).append(it)
+    for (game, ver), group in sorted(sk_groups.items()):
+        group_series = next((it["series"] for it in group
+                             if it.get("series")), "—")
+        md = [f"# 《{game}》素材卡骨架清单（{ver}）· {datetime.date.today()}", "",
+              f"> 系列：{group_series} ｜ 游戏：{game} ｜ 版本：{ver}",
+              "> 两段式产卡的骨架段：逐窗精读后登记的全部候选，只有三行，"
+              "**未展开成卡、不进卡库、不写 material_cards**。",
+              "> 用途：①当目录看本批覆盖了哪些料；②素材储备——哪条想启用，"
+              "展开成完整卡后重跑渲染。原话已过逐字锁。",
+              f"> 本清单共 {len(group)} 条。", ""]
+        for n, it in enumerate(group, 1):
+            s = it["skel"]
+            w = it["window"]
+            md += [f"## 骨架 {str(n).zfill(2)}",
+                   f"- 主题：{s.get('subject', '')}",
+                   f"- 原话：「{s.get('quote', '')}」",
+                   f"- 为什么值得：{s.get('why', '')}"]
+            if s.get("est"):
+                md.append(f"- 预估价值档：{s['est']}")
+            md += [f"- 出处：{w['episode_title']} · 原文第 {w['line_start']}"
+                   f"–{w['line_end']} 行", ""]
+        fname = f"《{game}》素材卡骨架清单（{ver}）-{today}.md"
+        (out_dir / fname).write_text("\n".join(md), encoding="utf-8")
+        written.append(fname)
     (out_dir / f"cards-state-{today}.json").write_text(
-        json.dumps({"cards": cards_out, "human_check": human_check},
+        json.dumps({"cards": cards_out, "human_check": human_check,
+                    "skeletons": skeleton_out},
                    ensure_ascii=False, indent=1), encoding="utf-8")
     pruned = prune_dated_reports(out_dir, [
         "《*》素材卡草稿（*）-{date}.md", "human_check-*-{date}.md",
-        "human_check-{date}.md", "cards-state-{date}.json"], today)
+        "human_check-{date}.md", "cards-state-{date}.json",
+        "《*》素材卡骨架清单（*）-{date}.md"], today)
     if pruned:
         print(f"清理旧报告 {len(pruned)} 份：{'、'.join(pruned)}")
     print(f"=== 完成：合格卡 {len(cards_out)} 张，逐字锁拦下 "
-          f"{len(human_check)} 条进 human_check")
+          f"{len(human_check)} 条进 human_check"
+          + (f"，骨架存档 {len(skeleton_out)} 条" if skeleton_out else ""))
     for f in written:
         print(f"产出：{out_dir / f}")
 
