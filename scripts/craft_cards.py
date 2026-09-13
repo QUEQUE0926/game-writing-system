@@ -34,6 +34,7 @@ import json
 import os
 import re
 import sys
+import time
 import urllib.request
 from pathlib import Path
 
@@ -403,6 +404,7 @@ def run_from_json(path: str, todo: list, out_dir: Path, today: str,
     卡号是稳定 ID：本批生成后固定，后续批次顺延，重排只动位置不改号。
     """
     items = json.loads(Path(path).read_text(encoding="utf-8"))
+    t0 = time.monotonic()
     by_key = {(w.get("source_id"), w["episode_title"], w["line_start"]): w for w in todo}
     cards_out, human_check, skeleton_out = [], [], []
     for item in items:
@@ -449,12 +451,14 @@ def run_from_json(path: str, todo: list, out_dir: Path, today: str,
     # 自动挂到卡上；易变条目过期拒挂并打印当日重核清单，不拿旧缓存当事实
     from gws import web_facts
     today_iso = f"{datetime.date.today():%Y-%m-%d}"
+    n_att_total = 0
     for game in {it["window"]["game"] for it in cards_out}:
         game_cards = [it["card"] for it in cards_out
                       if it["window"]["game"] == game]
         try:
             n_att, stale = web_facts.auto_attach(game_cards, game, today_iso,
                                                  cfg)
+            n_att_total += n_att
         except Exception as e:  # 档案损坏不阻塞产卡，只告警
             print(f"! 核验档案读取失败（{game}）：{e}，本次跳过自动挂载")
             continue
@@ -466,6 +470,15 @@ def run_from_json(path: str, todo: list, out_dir: Path, today: str,
 
     render_outputs(cards_out, human_check, todo, out_dir, today, cfg,
                    skeleton_out)
+    from gws import pipeline_timing
+    games = sorted({it["window"]["game"] for it in cards_out} or ["_global"])
+    game_key = games[0] if len(games) == 1 else "_global"
+    e = pipeline_timing.stamp(
+        "渲染", game_key, seconds=round(time.monotonic() - t0, 1),
+        note=f"卡{len(cards_out)}骨架{len(skeleton_out)}锁{len(human_check)}"
+             f"挂载{n_att_total}", cfg=cfg)
+    print(f"⏱ 计时：渲染 {e['seconds']}s 已记 "
+          f"{pipeline_timing._path(game_key, cfg).name}")
 
 
 def render_outputs(cards_out: list, human_check: list, todo: list,
@@ -699,6 +712,7 @@ def render_outputs(cards_out: list, human_check: list, todo: list,
 
 
 def main() -> None:
+    t_start = time.monotonic()
     limit = None
     from_json = None
     if "--limit" in sys.argv:
@@ -779,6 +793,14 @@ def main() -> None:
                                   "line_end")}})
 
     render_outputs(cards_out, human_check, todo, out_dir, today, cfg)
+    from gws import pipeline_timing
+    games = sorted({it["window"]["game"] for it in cards_out} or ["_global"])
+    game_key = games[0] if len(games) == 1 else "_global"
+    e = pipeline_timing.stamp(
+        "渲染", game_key, seconds=round(time.monotonic() - t_start, 1),
+        note=f"卡{len(cards_out)}锁{len(human_check)}LLM路径", cfg=cfg)
+    print(f"⏱ 计时：渲染 {e['seconds']}s 已记 "
+          f"{pipeline_timing._path(game_key, cfg).name}")
 
 
 if __name__ == "__main__":

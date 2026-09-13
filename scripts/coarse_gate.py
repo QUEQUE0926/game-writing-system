@@ -26,6 +26,7 @@ import datetime
 import json
 import statistics
 import sys
+import time
 import urllib.request
 from pathlib import Path
 
@@ -108,6 +109,7 @@ def gate_one(window: dict, state: dict, force: bool) -> dict:
 
 
 def main() -> None:
+    t0 = time.monotonic()
     limit = None
     game_filter = None
     force = "--force" in sys.argv
@@ -251,6 +253,12 @@ def main() -> None:
           f"DROP或失败 {len(drop)}")
     print(f"精读名单：{readlist}")
     print(f"工作台：{index_path}")
+    from gws import pipeline_timing
+    e = pipeline_timing.stamp(
+        "粗判", game_filter or "_global",
+        seconds=round(time.monotonic() - t0, 1),
+        note=f"KEEP{len(keep)}+MAYBE{len(maybe)}", cfg=cfg)
+    print(f"⏱ 计时：粗判 {e['seconds']}s 已记 {pipeline_timing._path(game_filter or '_global', cfg).name}")
 
 
 if __name__ == "__main__":

@@ -24,6 +24,7 @@ import datetime
 import json
 import re
 import sys
+import time
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
@@ -134,6 +135,7 @@ def merge_windows(hits: list, n_segs: int) -> list[list]:
 
 
 def main() -> None:
+    t0 = time.monotonic()
     game_filter = source_filter = None
     if "--game" in sys.argv:
         game_filter = sys.argv[sys.argv.index("--game") + 1]
@@ -334,6 +336,12 @@ def main() -> None:
               f"（入围门槛 {MIN_SCORE} 分）")
         print(f"报告：{index_path}")
         print(f"JSONL：{jsonl_path}")
+        from gws import pipeline_timing
+        e = pipeline_timing.stamp(
+            "筛窗", game_filter or "_global",
+            seconds=round(time.monotonic() - t0, 1),
+            note=f"窗口{len(windows_out)}", cfg=cfg)
+        print(f"⏱ 计时：筛窗 {e['seconds']}s 已记 {pipeline_timing._path(game_filter or '_global', cfg).name}")
     finally:
         conn.close()
 
