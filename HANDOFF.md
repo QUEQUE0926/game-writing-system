@@ -8,6 +8,8 @@
 
 **目标**：用户有大量游戏实况 TXT（录播/直播文稿），要建一套系统把它们**建档 → 切分成台词段（Segment）→ 分类说话人 → 切集（Episode）→ 提炼素材卡 → 最终产出游戏评论文章**。
 
+**⚡ 方向调整（2026-09-14，最新优先级最高）**：用户产出 V2  redesign 计划（已存 `17_V2_REDIRECT.md`，**先读它再谈素材卡**）。核心变化：素材卡不再是核心永久结构，改以 **Evidence → Event → Question → Thread → Writing Packet** 五层为创作主线；Card 降级为"按需生成的临时展示格式"；联网核验后移（只记 `external_fact_needed`，真正用时才核）；强模型只做理解不做包装；新增 OPEN_LOOPS 支线兜回账本和收尾助手。**路线已定案：不开新项目，就在本仓库做**（V2 全是增量结构，对 AGENTS.md 冻结契约零冲击，属 Level B 可扩展）；实现分支 **`v2/event-first`** 已从 dev 拉出并推送。详见下方"下一步计划 0"。
+
 **用户画像（务必遵守沟通方式）**：
 - 无编程基础，全程讲大白话，禁用 git/branch/PR 等术语（先给通俗解释再用）。
 - 偏好"帮我把东西直接做好"，而非给步骤说明。
@@ -77,9 +79,15 @@
 ### 写库器
 - `scripts/import_cards.py`（2026-09-13）：`cards-state-<日期>.json` → material_cards + material_card_evidence + audit_log。默认 dry-run，`--apply` 落库。字段映射固定（detail→observation、feeling→experience、analysis→interpretation、judge_reason→judgement、concrete→evidence_strength、writing→writing_value、help→author_interest、unique→reuse_value）；证据=原话去空白后在窗口行区间 segments 逐字命中，命中 0 条拒绝入库；同 episode+同 quote 幂等跳过。
 
-## 三、当前状态（2026-09-13 收工：灰烬之国 52 卡 + 命运之手 26 卡待用户验收，计时功能已落地）
+## 三、当前状态（2026-09-14 收工：V2 方向已定案、实现分支已建，旧线卡在等用户验收 + 代理未恢复）
 
-**没有卡点。正在等用户验收两批 B 路手写+联网核验卡（或指出要改的卡）。**
+**旧线**：没有卡点，等用户验收两批 B 路卡（或指出要改的卡）。
+**新线（V2）**：方向讨论完毕、分支已建好，**还没写一行 V2 代码**。P0 第一刀（events/questions/threads 迁移）未动。
+
+**Git 状态（重要，别搞乱）**：
+- 当前分支 = **`v2/event-first`**（从 dev 拉出，已推送远端）。V2 的所有代码改动都在这条分支上做。
+- **本地 dev 领先 `origin/dev` 2 个提交**（`e85d3bb`、`0673bbd`——后者是 REVIEW_REQUEST：Clash 界面活着但代理核心无监听，坑32）。这 2 个提交已随 `v2/event-first` 推送上云，但 `origin/dev` 本身还没有。代理恢复后需补推 dev，否则别的机器拉 dev 会缺这 2 个提交。
+- `17_V2_REDIRECT.md`（V2 计划全文）本次已写入仓库并随分支提交——原稿一度只存在于 ZCode 粘贴临时目录（会被清理），已抢救。
 
 - **dev 库现有 4 个源**：《灰烬之国》正式版 666 句 + 8月更新 515 句、《命运之手》2325 句、《零秒：时光的归途》1481 句（旧 29 源数据 09-12 已清，这四个都是之后重新导入的）。
 - **A 路 81 张机器卡已按用户拍板弃掉**（"走个B路"）。卡片原始数据在 `data/dev/exports/cards/cards-state-《命运之手》-20260913.json`（按游戏分文件新格式，见坑46）；**灰烬 52 卡 state 因是修复前产出、只有 tmp 备份：`data/dev/tmp/cards-state-20260913.backup-灰烬52卡.json`**。
@@ -101,6 +109,11 @@
 
 ## 四、下一步计划（主线）
 
+0. **V2 实现（2026-09-14 新主线，按 17_V2_REDIRECT.md 的 P0→P3 走，分支 `v2/event-first`）**：
+   - **P0 第一刀**：新增迁移建 events / event_evidence（或等价关系表）/ questions / threads 几张**纯增量新表**（老卡表一个字段都不动，AGENTS.md 冻结项全不碰）→ 过 verify 七步。
+   - 随后按 17 文档 P0 清单：精读输出从"主题/原话/为什么值得"升级为 Event Lite/Full + Tension + Question + Thread Signal；原话引用改 segment_id（模型只选 segment，程序取原话）；联网核验后移（只记 external_fact_needed）；采矿流程到 Event/Thread 即停，停止默认完整制卡。
+   - **MVP 验证**：拿《命运之手》做 A/B（旧 26 卡+34 骨架 vs 新 Event/Question/Thread），判据是"哪种输出更容易让我想到这篇写什么"，不是比谁卡多。
+   - 注意：V2 落地期间旧 B 路卡流程**原样保留**（A/B 需要两轨并存）；旧线验收（本条 1）与新线开发可并行，别互相阻塞。
 1. **用户验收两批 B 路卡（灰烬 52 + 命运之手 26）+ 回填 human_check**（逐卡勾 采用/删除，改提交状态；命运之手 human_check 4 条：前作信息、等级30/32、CE合规×2）。验收通过 → 改名归档（05 流程）→ `import_cards.py --apply` 写库：命运之手用 exports 下的 `cards-state-《命运之手》-20260913.json`，灰烬用 `--file data/dev/tmp/cards-state-20260913.backup-灰烬52卡.json`（坑46：修复前的旧批次只剩这份备份）。
 2. **零秒铺量**：coarse_gate --game 零秒 → B 路两段式产卡（流程同命运之手：粗判→精读→骨架全量+精写中高→建/复用 web_facts 档案→渲染→验收）。
 3. **跨游戏关联（方案已定案写入 05，待实现）**：①玩家明说他游→当场画线（只关联本地库游戏；灰烬的「植物大战僵尸」提及卡已登记，待该游戏入库补线）；②内容相似 embedding 复测（第二个游戏产卡后）；③联网联想提前到素材卡阶段。落地顺序：验收写库 → 新游戏产卡（带信号1）→ embedding 复测 → 联网联想。
@@ -168,6 +181,9 @@
 48. **unittest 直接 discover 找不到 gws 包**：必须 `PYTHONPATH=src`（verify.py 会自动带，手工跑单测别忘）。
 50. **--from-json 卡源 JSON 格式（09-13 重跑踩过）**：craft_cards 期望顶层是 `list`（不是 `{"items": [...]}`），每项含 `episode_title`/`window_line_start`（窗口起始行，不是 quote 所在行）/`cards`/`skeletons`；卡字段名是 `subject/detail/feeling/analysis`（不是五段式 observation 等），五维分数 `help/concrete/delta/unique/writing` 必须展平到顶层（不是 `scores` 字典），`tags`/`usage`→`use`。构建器必须先按窗口分组再送渲染。
 51. **精读转存 txt 与 readlist jsonl 的 quote 差异（09-13 重跑踩过）**：重跑时 readlist jsonl 已被清理，只有 `read_windows_ms.txt`；逐字锁必须对着**实际送渲染的窗口数据源**重建（从 txt 按 `===== 窗口标题 =====` 解析），不能假设 jsonl 还在。E21:2673 的 quote 跨了两行（2673+2679），单行 quote 才能逐字命中。
+52. **方向性文档必须当场落库，别留在粘贴临时目录（09-14 踩过）**：V2 redesign 全文最初只存在于 ZCode 的 `paste-attachments` 临时文件里，那目录会被清理。用户拍板的大方向文档，收到立刻写进仓库并 commit，别等"改天整理"。
+53. **从本地 dev 拉分支会把 dev 未推送的提交一起带走（09-14）**：本地 dev 领先 origin/dev 2 个提交时拉出的 `v2/event-first` 包含了它们；dev 本身仍未推送。跨机器/跨会话对账时记住：origin/dev 缺 `e85d3bb`、`0673bbd` 两个提交，代理恢复后补推。
+54. **V2 路线红线（09-14 用户已拍板，别重开讨论）**：不开新项目、不推翻 AGENTS.md 契约；V2 新结构（Event/Question/Thread 等）一律走**新增迁移**，老卡表与枚举一个不动；旧卡流程在 A/B 完成前不得删除或改死。
 
 ## 六、验证方式速查
 
