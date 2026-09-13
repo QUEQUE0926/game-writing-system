@@ -117,6 +117,63 @@ def quote_ok(quote: str, window: dict) -> bool:
     return True
 
 
+# 联网字段新规矩（05 文档 2026-09-13 修订）：fact_check / community_scan 结构化，
+# 每条三件套=结论（含等级措辞）+链接+来源页逐字原文片段。
+# 判定等级措辞冻结在 05 文档；反证/无信号/无法验证必须进 human_check。
+HC_VERDICTS = ("存疑", "无信号", "无法验证")
+
+
+def _web_entry_lines(tag: str, e: dict) -> list[str]:
+    head = f"  - **{tag}**：{e.get('claim') or e.get('topic', '')}"
+    if e.get("verdict"):
+        head += f"｜{e['verdict']}"
+    lines = [head]
+    if e.get("conclusion"):
+        lines.append(f"    结论：{e['conclusion']}")
+    grade = e.get("grade") or e.get("platform") or ""
+    if grade:
+        lines.append(f"    来源层级：{grade}")
+    if e.get("url"):
+        lines.append(f"    链接：{e['url']}")
+    if e.get("snippet"):
+        lines.append(f"    原文片段：「{e['snippet']}」")
+    if e.get("date"):
+        lines.append(f"    核验日期：{e['date']}")
+    return lines
+
+
+def render_web_block(c: dict) -> list[str]:
+    """渲染「核对（事实核验）」+「社区参照」两栏；旧自由文本字段兜底兼容。"""
+    fc = c.get("fact_check") or []
+    cs = c.get("community_scan") or []
+    out: list[str] = []
+    if fc:
+        out.append("- **核对（事实核验）**：")
+        for e in fc:
+            out += _web_entry_lines("条目", e)
+    if cs:
+        out.append("- **社区参照（非事实依据）**：")
+        for e in cs:
+            out += _web_entry_lines("条目", e)
+    if not fc and not cs:
+        legacy = c.get("ai_web") or c.get("web_check")
+        out.append("- **AI辅助结论（联网）**："
+                   + (legacy or "无外部核验项——本卡信息全部来自转录原文（玩家口述）"))
+        if c.get("web_check") and c.get("ai_web"):
+            out.append(f"- **核对（联网）**：{c['web_check']}")
+    return out
+
+
+def human_check_items(c: dict) -> list[str]:
+    """按新规矩必须转人工的联网条目（反证/无信号/无法验证）的摘要清单。"""
+    items = []
+    for e in (c.get("fact_check") or []):
+        if e.get("verdict") in HC_VERDICTS:
+            items.append(f"{e.get('claim', '')}（{e['verdict']}）"
+                         + (f"：{e['conclusion']}" if e.get("conclusion") else ""))
+    return items
+
+
 def render_card(no: int, c: dict, w: dict) -> list[str]:
     ver_tag = f"（{w['ver']}）" if w.get("ver") else ""
     anchor = (f"{w['game']}{ver_tag} · {w['episode_title']} · "
@@ -175,12 +232,11 @@ def render_card(no: int, c: dict, w: dict) -> list[str]:
                and c.get("speaker_conf", "高") == "高"
                else f"{c.get('speaker', '待确认')}原话"
                f"（置信度{c.get('speaker_conf', '待确认')}）")
-            + f"**：“{c['quote']}”", "",
-            "- **AI辅助结论（联网）**："
-            + (c.get("ai_web") or c.get("web_check")
-               or "无外部核验项——本卡信息全部来自转录原文（玩家口述）")]
-    if c.get("web_check"):
-        out.append(f"- **核对（联网）**：{c['web_check']}")
+            + f"**：“{c['quote']}”", ""]
+    out += render_web_block(c)
+    hcitems = human_check_items(c)
+    if hcitems:
+        out.append("- **待人工（联网未闭环）**：" + "；".join(hcitems))
     if c.get("web_log"):
         out.append("- **核对记录**："
                    + re.sub(r"^待人工[:：]\s*", "", c["web_log"]))
@@ -446,10 +502,17 @@ def run_from_json(path: str, todo: list, out_dir: Path, today: str,
     hc_groups: dict[tuple, list] = {}
     for it in cards_out:
         c = it["card"]
-        if not c.get("web_log"):
+        wl = re.sub(r"^待人工[:：]\s*", "", c.get("web_log", ""))
+        hcitems = human_check_items(c)
+        if not wl and not hcitems:
             continue
+        # 新规矩：联网未闭环条目（存疑/无信号/无法验证）与旧"待人工"并列登记
+        note = "；".join(x for x in ([wl] if wl else [])
+                         + [f"联网未闭环：{h}" for h in hcitems])
+        c = dict(c)
+        c["web_log"] = note
         hc_groups.setdefault((it["window"]["game"], it["ver"]), []).append(
-            ("待人工", it["card"], it["window"], it["no"]))
+            ("待人工", c, it["window"], it["no"]))
     for item in human_check:
         w = item["window"]
         hc_groups.setdefault((w["game"], w.get("ver", "default")),
@@ -476,10 +539,8 @@ def run_from_json(path: str, todo: list, out_dir: Path, today: str,
                 if ctx:
                     hc += [f"- 原文上下文（原话所在句前后各2句，"
                            f"[ ]内为原文行号）："] + ctx
-                hc += ["- AI辅助结论（联网）："
-                       + (c.get("ai_web") or c.get("web_check")
-                          or "无外部可核信息，以游戏画面/人工记忆为准"),
-                       "- 人工结论：（待填写）", ""]
+                hc += render_web_block(c) or ["- AI辅助结论（联网）：无外部可核信息，以游戏画面/人工记忆为准"]
+                hc += ["- 人工结论：（待填写）", ""]
             else:
                 hc += [f"## 条目 {str(n).zfill(2)}",
                        f"- 窗口：{game} · {w['episode_title']}",
@@ -488,10 +549,8 @@ def run_from_json(path: str, todo: list, out_dir: Path, today: str,
                        f"- 主题线索：{c.get('subject', '')}"]
                 if ctx:
                     hc += ["- 原文上下文（供回查比对）："] + ctx
-                hc += ["- AI辅助结论（联网）："
-                       + (c.get("ai_web")
-                          or "无外部核验项（未通过逐字锁，优先回查原文）"),
-                       "- 人工结论：（待填写）", ""]
+                hc += render_web_block(c) or ["- AI辅助结论（联网）：无外部核验项（未通过逐字锁，优先回查原文）"]
+                hc += ["- 人工结论：（待填写）", ""]
         n_total = len(entries)
         hc += ["---", "",
                f"提交状态：（待填写）", "",
