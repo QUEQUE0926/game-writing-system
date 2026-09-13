@@ -30,7 +30,7 @@
 - **环境隔离**：`data/<dev|test|prod>/` 三套物理隔离 SQLite，各含 `app.db、raw/、inbox/、exports/、backups/、tmp/`。测试必须用 test 环境或临时目录（`GWS_RUNNING_TESTS=1` + `GWS_DATA_ROOT=$(mktemp -d)`），**禁止拿生产数据测试**。
 - **Schema**：22 张表。001 建 21 表 + 002 加 `game_aliases`（别名全库唯一）+ 003 加固（games 两个 partial unique index 封独立游戏同名 NULL 漏洞、episode_segments 加 position 列）+ **004 加 `game_versions.sort_key`**（手动版本序号，可空；NULL 排后按 created_at+rowid 兜底；仅影响展示排序）。当前 schema version = 4。
   改序号用 `python scripts/gws.py set-version-order <版本名或id> <数字|clear>`（多命中报错不猜，写 audit_log）。dev 已标：灰烬之国 正式版=1、8月更新=2。
-- **主拓扑**：`series → games → game_versions → sources → segments`，全部靠 **UUIDv7 稳定 id** 外键关联，name 只在导入入口解析一次用。下游还有 episodes / material_cards / claims / articles 等已建表（空房待入住）。
+- **主拓扑**：`series → games → game_versions → sources → segments`，全部靠 **UUIDv7 稳定 id** 外键关联，name 只在导入入口解析一次用。下游还有 episodes / material_cards / claims / articles 等已建表。
 - **状态机**：长期实体表有 status（active/archived/deprecated/trashed，trashed 是终点且拒新引用）；5 张纯关系表（episode_segments、material_card_evidence、asset_tags、claim_evidence、project_assets）**无 status**，直接删 + audit_log。
 
 ### 入口（用户日常使用方式）
@@ -47,59 +47,54 @@
 - 导入只接受 `.txt`（docx 支持已按用户要求撤销）。
 - 只读原文归档：`data/<env>/raw/<sha前2位>/<sha>.txt`，永不覆盖。
 
-## 三、当前状态（2026-09-12 第二次深夜更新：dev 清空重导 + 33 卡全流程跑通）
+## 三、当前状态（2026-09-13 更新：33 卡按联网新规矩重核完毕，写库器落地，等用户验收）
 
-**没有卡点。等用户验收《灰烬之国》两个版本的 33 张素材卡（18+15）。验收通过即可铺量其余游戏。**
+**没有卡点。等用户验收《灰烬之国》33 张素材卡（正式版 18 + 8月更新 15）+ 回填 human_check（各 14 条待填）。验收通过并回填后，`scripts/import_cards.py --apply` 一键写库，然后铺量其余游戏。**
 
-- **重要：dev 库本日被用户要求清空过一次**（原文副本 raw/ 也删了，因为哈希文件名对不上号），随后用户重新导入了《灰烬之国》两份实况。**当前 dev 库只有这 2 个源**：正式版 666 句 + 8月更新 515 句，共 1,181 句、25 集（正式版 14 + 8月更新 11）。之前 29 源 27,557 句的数据没了，其他游戏的源要重新导入。
-- **2026-09-13 联网规矩大修订已落地（33 卡已按新规矩重核）**：事实核验与社区佐证/扫描分轨（详见 05 文档「联网规矩」节）。`my_cards.json` 联网字段已重建为结构化 `fact_check`/`community_scan`（每条=结论含等级措辞+链接+来源页逐字片段+日期，旧 `web_check`/`ai_web` 字段已退役，重建脚本 `data/dev/tmp/rebuild_cards_web.py`，旧卡备份 `my_cards.backup-20260913.json`）。craft_cards 渲染分「核对（事实核验）」「社区参照（非事实依据）」两栏，存疑/无信号/无法验证自动进 human_check。本批新核出：开发方 MyACG Studio、8月三连补丁（V0.6.11 8/14 调饰品掉率、V0.6.11a 8/16 修bug、V0.6.11b 8/26）、官方成就页证实『塞弗林的水壶』、知乎证实钓鱼小游戏；『莉薇特』降级为社区佐证待官方源确认；知乎403受限记录在案。小黑盒话题流链路实测通（topic_id=665862，20帖已存 `data/dev/tmp/xhh_665862_feed.json`）。33 张新卡产出在 `data/dev/exports/cards/`（20260913 后缀），等用户验收。
-- **卡的源头数据是 `data/dev/tmp/my_cards.json`**（AI 手写卡 + 联网结论 + related 引用），改卡要改它再重跑 `craft_cards.py --from-json`；`exports/cards/cards-state-*.json` 只是渲染产物。
-- **craft_cards 本会话大升级（全部已 verify+push）**：
-  1. 报告一律**按游戏+版本一份文件**（screen_windows 工作台、coarse_gate 粗判台、human_check 同步拆分）；文件头有「系列｜游戏｜版本」门牌行（系列从库查，无系列显示 —）；
-  2. **跨版本双向引用自动化**：`auto_link_cross_version()` 两个信号——孪生窗口（两版本窗口原文相似≥0.6）+ 稀有主题词共现（主题字段纯汉字二元组、本批出现≤3卡、共享≥1个），命中即双向挂「相关联卡」行并打印配对依据。曾试过全文本相似度和详情词共现两版，因配对太滥/太哑弃用，别改回去；
-  3. **对齐用户贴的素材卡提示词规范**：联网策略只用四值枚举（重点联网/条件联网/顺带核对/不联网），核验结果写进「核对（联网）」（已核实+结果+具体出处 / 未查到转人工）；说话人=玩家且置信度高才标"玩家原话"；自我反转卡渲染 `- 反转:参见素材卡 NN`；human_check 每条带**卡内原话+原文上下文±2句（按版本精确取源）**。
-  4. **版本对比卡**：8月更新"新地图感受不到"（高）、正式版"炮手疑似被削"（中）——用户明确要这类卡，铺量时注意从转录里挖跨版本对比语句。
-  5. **human_check 末尾有「提交状态：（待填写）」+ 完成标准**：条数按实际条目生成；归档前的机器验证=文件内搜「（待填写）」为 0 处且提交状态=已填写，不通过不改名归档。用户明确要过这个标记，别删。
-  6. **web_log 渲染时程序自动剥离"待人工："前缀**（human_check 和卡片"核对记录"两处）——用户两次圈出重复前缀，此为双保险的程序侧，别删。
-- **联网来源规矩（用户拍板，已记坑34）**：来源必须与游戏强相关或与该句强相关；范围=小黑盒/知乎/小红书/B站/其乐/TapTap/Steam社区/YouTube/Reddit 及海外媒体；写具体页面禁模糊合集。本批已核验的强来源：Steam商店页 app/3214610、Steam社区公告（8月16日6.11更新修bug为主）、知乎专栏 zhuanlan.zhihu.com/p/2023838493994940170、TapTap moment/759597138744181809、YouTube繁中流派实测（莉薇特砲台流/烏瑪難度8召唤流）。
+- **重要：dev 库 2026-09-12 被用户清空过一次**（原文副本 raw/ 也删了，因为哈希文件名对不上号），随后用户重新导入了《灰烬之国》两份实况。**当前 dev 库只有这 2 个源**：正式版 666 句 + 8月更新 515 句，共 1,181 句、25 集（正式版 14 + 8月更新 11）。旧 29 源 27,557 句数据没了，其他游戏的源要重新导入。
+- **本会话（2026-09-13）落地的大事（均已 verify 全 PASS + push dev）**：
+  1. **联网规矩大修订**（05 文档「联网规矩」节 + 坑34 修订）：事实核验与社区佐证/扫描**分轨**。事实核验查官方一手源（商店页→公告/patch notes→厂商官网→原始访谈→论文/文档→可靠媒体），按 5 类核验对象触发、不受价值档限制；社区平台（14 个）只作佐证，结论带等级措辞（强证实/弱证实/反证/无信号/无法验证）；弱证实不能单独作结论、反证转 human_check 不许 AI 自改。每条核验强制三件套：结论（含等级措辞）+ 具体链接 + 来源页逐字原文片段。
+  2. **卡数据重建**：`data/dev/tmp/my_cards.json` 联网字段拆为结构化 `fact_check`/`community_scan`（旧 `web_check`/`ai_web` 自由文本已退役；重建脚本 `data/dev/tmp/rebuild_cards_web.py`；旧卡备份 `my_cards.backup-20260913.json`）。craft_cards 渲染分「核对（事实核验）」「社区参照（非事实依据）」两栏，存疑/无信号/无法验证自动进 human_check。
+  3. **33 卡全部重核**：新核出开发方 MyACG Studio（发行方含 NPC Entertainment）、8月三连补丁（V0.6.11 8/14 调饰品掉率、V0.6.11a 8/16 修bug、V0.6.11b 8/26）、官方成就页证实『塞弗林的水壶』、知乎证实钓鱼小游戏；『莉薇特』按规矩降级为社区佐证待官方源确认；B站小红流派合集补上具体视频链接 BV11EqwBBE7X。小黑盒链路实测通（topic_id=665862，20 帖存 `data/dev/tmp/xhh_665862_feed.json`）。
+  4. **素材卡写库器 `scripts/import_cards.py` 落地**：默认 dry-run、`--apply` 落库；字段映射记入 audit_log（detail→observation、feeling→experience、analysis→interpretation、judge_reason→judgement、concrete→evidence_strength、writing→writing_value、help→author_interest、unique→reuse_value）；证据绑定=原话去空白后在窗口行区间内逐字命中 segment，命中 0 条拒绝入库；同 episode+同 quote 幂等跳过。集成测试 3 条全过（tests/integration/test_import_cards.py），dev 库 dry-run 预演 33 卡全部有锚点可入库。
+- **最新 commit**：`8a873ca`（import_cards 落地）。上一个 `1327c33`（联网规矩修订+33卡重核）。
+- **产出在 `data/dev/exports/cards/`（20260913 后缀）**：两份草稿（正式版/8月更新）+ 两份 human_check（各 14 条待填）+ `cards-state-20260913.json`。
 
-- **素材卡自动化三件套（本次会话新写，全部已 verify+push）**：
-  1. `scripts/screen_windows.py`——规则召回+窗口合成。8 类信号词库（好评/差评/惊讶/困惑/学会/失败/判断/细节）、命中合并成窗口（±20 句邻域、近距 10 句再合并、不跨集）、**双分制**：总分≥3 入围（保召回），**密度分排序**（每类每窗最多计 2 次 ÷ 句数×10，消"话多红利"和嚎叫刷分）。产出每游戏工作台 + `windows-<日期>.jsonl`。
-  2. `scripts/coarse_gate.py`——本地双模型粗判门控。**主判官 qwen3:4b-instruct-2507-q4_K_M**（Ollama，JSON schema 强制格式，KEEP/MAYBE/DROP+8 信号标签+重要度0~3+置信度，约3.3秒/窗）；**复核员 deepseek-r1:latest** 只接争议件（密度前30%但4B没给KEEP）。判定落 `gate-state.json` 断点续跑；产出精读名单 `readlist-<日期>.jsonl` + 粗判工作台。
-  3. `scripts/craft_cards.py`——精读产卡第三层。读精读名单出素材卡草稿；**三道程序锁**：原话逐字锁（引文必须在窗口原文逐字命中，不中重试一次再不中进 human_check）、同窗去重、schema 限 0~3 卡（注意：Ollama 不执行 maxItems，代码里还要去重兜底）。支持 `--from-json`（AI/人工直产卡走同一套锁和渲染）。证据位置由程序从锚点填，模型无权填。
-- **本地模型岗位表（三轮考试定案，别再回退）**：qwen3-4B-Instruct=主判官（有梯度：候选16 KEEP+4 MAYBE，干扰项只给 MAYBE 降重要度）；deepseek-r1 7.6B=复核员+贴标签（判断偏松、绝对判断不可信，但格式化输出和信号标签合格）；qwen3:1.7b/0.6b 判断岗否决（1.7b 8窗全收零区分度）；qwen3-embedding:0.6b 用通用锚点分不开高低，等有真实素材卡后再试。
-- **首批正式卡**：《灰烬之国》素材卡草稿（正式版）-20260912.md，12 张（高6/中6），全部过逐字锁；human_check 登记了 ASR 变体与口播数值等待人工项。**联网核验已做**：灰烬之国=Cinderia，2026-03-30 Steam EA、68元、EA期约12个月，与玩家口述"大概一年"一致。
-- **版式已对齐用户旧格式**（用户逐项验收改出来的，别改回去）：文件名《游戏》素材卡草稿（版本名）-日期.md，一游戏+版本一份文件（版本名从 episodes→game_versions 查库）；文档骨架=来源说明→"先读我：张力10秒版"→"现在只做这3件事"→价值概览→高/中/低三档分组（组内总分降序，同分按玩家帮助→判断增量→独特性）→文末提交状态；卡头=基础价值/分项（"名称 **分数**"竖线式，最高分加粗）/建议用途/联网策略/判断理由/机会价值；**AI辅助结论（联网）在折叠证据区内**，每卡必有（有核实写结论+出处，没有写"无外部核验项——信息全部来自转录原文"），明确区分外部信息与玩家口述；human_check 每轮全量重写，登记逐字锁失败+各卡"待人工"核对项两类。
-- **dev 库最新数**：2 源 / 1,181 句 / 25 集（见第三节开头，旧 29 源数据已被用户清空）。
-- **联网模型 API**：用户未提供 key，第三层"强模型"现阶段由会话 AI 本人直读窗口出卡（--from-json 模式），程序锁对谁都生效；将来接 Kimi/GLM 只改 GWS_LLM_URL/GWS_LLM_MODEL 环境变量。
+### craft_cards 历史大升级（2026-09-12，全部已 verify+push，别回退）
+1. 报告一律**按游戏+版本一份文件**（screen_windows 工作台、coarse_gate 粗判台、human_check 同步拆分）；文件头有「系列｜游戏｜版本」门牌行（系列从库查，无系列显示 —）；
+2. **跨版本双向引用自动化**：`auto_link_cross_version()` 两个信号——孪生窗口（两版本窗口原文相似≥0.6）+ 稀有主题词共现（主题字段纯汉字二元组、本批出现≤3卡、共享≥1个），命中即双向挂「相关联卡」行。曾试过全文本相似度和详情词共现两版，因配对太滥/太哑弃用，别改回去；
+3. **对齐用户贴的素材卡提示词规范**：联网策略只用四值枚举（重点联网/条件联网/顺带核对/不联网）；说话人=玩家且置信度高才标"玩家原话"；自我反转卡渲染 `- 反转:参见素材卡 NN`；human_check 每条带**卡内原话+原文上下文±2句（按版本精确取源）**。
+4. **版本对比卡**：8月更新"新地图感受不到"（高）、正式版"炮手疑似被削"（中）——用户明确要这类卡，铺量时注意从转录里挖跨版本对比语句。
+5. **human_check 末尾有「提交状态：（待填写）」+ 完成标准**：条数按实际条目生成；归档前的机器验证=文件内搜「（待填写）」为 0 处且提交状态=已填写，不通过不改名归档。用户明确要过这个标记，别删。
+6. **web_log 渲染时程序自动剥离"待人工："前缀**（human_check 和卡片"核对记录"两处）——用户两次圈出重复前缀，此为双保险的程序侧，别删。
 
-- **剩余未处理源约 15 个**（三国朋克 3031 句、双影奇境 4901 句、苏丹的游戏 1110 句等），要跑时用户说了算。这些源跑完分类+切集后，screen_windows/coarse_gate 会增量处理。
-- **旧版提名工具 nominate_moments.py 的 391 候选**（`data/dev/exports/nominations/`）已被 screen_windows 管线取代，但勾选规矩（每游戏一份、相对分三档、首屏20张）全部沿用。
-- **总览页**：`data/dev/exports/dev_games_overview.html`（按 sort_key 排序，含各源台词数）。
-- **工作分支常驻 dev**。dev 分支最新 commit：`4b6aa60`（human_check 提交状态行）。
-- prod 仍是干净空库。
-- 遗留小瑕疵：①②（银翼喵侍 dmeo 版本名、星际裂变 test 小文件）**已随 dev 清库消失**，重导时注意别再导错；③ 代理端口 7890 曾失效过一轮（后恢复），push 连接失败先查代理端口（见坑33）。
+### 素材卡自动化三件套（2026-09-12 落地，全部已 verify+push）
+1. `scripts/screen_windows.py`——规则召回+窗口合成。8 类信号词库（好评/差评/惊讶/困惑/学会/失败/判断/细节）、命中合并成窗口（±20 句邻域、近距 10 句再合并、不跨集）、**双分制**：总分≥3 入围（保召回），**密度分排序**（每类每窗最多计 2 次 ÷ 句数×10，消"话多红利"和嚎叫刷分）。产出每游戏工作台 + `windows-<日期>.jsonl`。
+2. `scripts/coarse_gate.py`——本地双模型粗判门控。**主判官 qwen3:4b-instruct-2507-q4_K_M**（Ollama，JSON schema 强制格式，KEEP/MAYBE/DROP+8 信号标签+重要度0~3+置信度，约3.3秒/窗）；**复核员 deepseek-r1:latest** 只接争议件（密度前30%但4B没给KEEP）。判定落 `gate-state.json` 断点续跑；产出精读名单 `readlist-<日期>.jsonl` + 粗判工作台。
+3. `scripts/craft_cards.py`——精读产卡第三层。读精读名单出素材卡草稿；**三道程序锁**：原话逐字锁（引文必须在窗口原文逐字命中，不中重试一次再不中进 human_check）、同窗去重、schema 限 0~3 卡（注意：Ollama 不执行 maxItems，代码里还要去重兜底）。支持 `--from-json`（AI/人工直产卡走同一套锁和渲染）。证据位置由程序从锚点填，模型无权填。
+- **本地模型岗位表（三轮考试定案，别再回退）**：qwen3-4B-Instruct=主判官；deepseek-r1 7.6B=复核员+贴标签；qwen3:1.7b/0.6b 判断岗否决；qwen3-embedding:0.6b 用通用锚点分不开高低，等有真实素材卡后再试。
+- **版式已对齐用户旧格式（别改回去）**：文件名《游戏》素材卡草稿（版本名）-日期.md；文档骨架=来源说明→"先读我：张力10秒版"→"现在只做这3件事"→价值概览→高/中/低三档分组（组内总分降序，同分按玩家帮助→判断增量→独特性）→文末提交状态；卡头=基础价值/分项（"名称 **分数**"竖线式，最高分加粗）/建议用途/联网策略/判断理由/机会价值；human_check 每轮全量重写。
 
 ## 四、下一步计划（主线）
 
 **第 7 步主体：铺量制卡。** 顺序：
 
-1. **用户验收 33 张卡**（`data/dev/exports/cards/《灰烬之国》素材卡草稿（正式版/8月更新）-20260912.md` + 对应两份 human_check）。验收通过是铺量的前提。用户会圈截图提意见，按意见改版式后重跑 `craft_cards --from-json data/dev/tmp/my_cards.json`。
-2. **重新导入其他游戏**：旧 29 源已清空，需要用户把原 txt 放进 `data/dev/inbox/auto/`（命名 `系列 - 游戏 - 版本.txt`）或拖 drop-import-dev.bat，然后分类+切集+筛窗+粗判逐游戏铺量，产出按"一游戏+版本一份文件"。
-3. **用户按 human_check 回填人工结论**（本批 5 条：ASR 变体『学会bug』『峨蚜闪电无一』『原子弹』、口播数值、更新日期25号vs公告16号），通过后卡片改名归档（`material_cards.md` 流程），再写库入库。**写库代码已就绪（2026-09-13 新增 `scripts/import_cards.py`，集成测试 3 条全过，dev 库 dry-run 预演 33 卡全部有锚点可入库）**：默认 dry-run、`--apply` 落库；字段映射与幂等/无锚点拒绝规矩见 05 文档管线第 4 条。等用户验收+回填后再 `--apply`。
-4. **跨游戏关联（方案 2026-09-13 已定案写入 05 文档，待实现）**：三个信号按确定性排序——①玩家明说提到其他游戏→当场画 cross_reference 线，只关联本地库已有的游戏，外部游戏提及只记卡字段不建档案，等它进库后重跑匹配自动补线；②内容相似→素材卡语义匹配（qwen3-embedding 在第二个游戏产卡后复测，孪生卡当正样本）；③联网联想提前到素材卡阶段（按游戏一轮非逐卡）。落地顺序：验收 33 卡 → 写库迁移 → 新游戏产卡（带信号1）→ embedding 复测 → 联网联想。
+1. **用户验收 33 张卡 + 回填 human_check**（`data/dev/exports/cards/` 两份 20260913 草稿 + 两份 human_check，各 14 条待填，含：日期 25号 vs 官方 8月26日 V0.6.11b、『美杜莎之眼』、『难度解绑』、『修改器合规性』、Steam 评测原文待回查）。验收通过并回填 → 改名归档（05 文档流程）。
+2. **`scripts/import_cards.py --apply` 把 33 卡写进库**（代码已就绪，只等验收）。
+3. **重新导入其他游戏**：旧 29 源已清空，需要用户把原 txt 放进 `data/dev/inbox/auto/`（命名 `系列 - 游戏 - 版本.txt`）或拖 drop-import-dev.bat，然后分类+切集+筛窗+粗判逐游戏铺量，产出按"一游戏+版本一份文件"。
+4. **跨游戏关联（方案已定案写入 05 文档，待实现）**：三个信号按确定性排序——①玩家明说提到其他游戏→当场画 cross_reference 线，只关联本地库已有的游戏，外部游戏提及只记卡字段不建档案，等它进库后重跑匹配自动补线；②内容相似→素材卡语义匹配（qwen3-embedding 在第二个游戏产卡后复测，孪生卡当正样本）；③联网联想提前到素材卡阶段（按游戏一轮非逐卡）。落地顺序：验收 33 卡 → 写库 → 新游戏产卡（带信号1）→ embedding 复测 → 联网联想。
 5. **规则权重校准（待数据）**：8 类信号词权重目前仍是手拍，等人工勾选积累一批真卡后做回归：哪类信号真的预测"采用"。
-5. **联网模型可选升级**：用户哪天给 API key（Kimi/GLM 等），craft_cards 改环境变量即可换强模型，出卡质量再上一档。
+6. **联网模型可选升级**：用户哪天给 API key（Kimi/GLM 等），craft_cards 改环境变量即可换强模型。
 
 **之后的路线**：第 8 步起打标签/建关联 → 第 10 步后建写作项目 → claims（必须绑素材卡）→ 角度 → 主题（**必须用户拍板，是人工关卡**）→ 提纲 → 文章。再往后才是灵感卡（第 16 步）。
 
 **已获用户授权的决策方式（重要）**：琐碎判断（如"第二发言人是谁""test 文件跳过"）**AI 直接定、直接干**，把依据写进 audit_log，报表里告知结论即可；**不要逐项请用户拍板**（用户明确说过"太繁琐了"）。方案级的事（改流程、改分档规则）仍需先出方案确认。
 
-**本地 Ollama 现在的岗位**：不再是"漏抓才用"，而是粗判门控常驻（4B 主判 + r1 复议）。必须 JSON schema 强制格式 + 固定 seed（seed=42），能用规则的绝不请模型，能本地的不上联网。
+**本地 Ollama 现在的岗位**：粗判门控常驻（4B 主判 + r1 复议）。必须 JSON schema 强制格式 + 固定 seed（seed=42），能用规则的绝不请模型，能本地的不上联网。
 
 ## 五、踩过的坑（绝对不要再踩）
 
-1. **测试"报红"先分清脚本错还是代码错**：三轮组合测试里所有"失败"全是测试脚本自身错（拿已导入内容测"新实况"、期望值算漏系列、拿新名撞旧名别名）。代码至今零冤案。**先复核测试用例再改代码。**
+1. **测试"报红"先分清脚本错还是代码错**：三轮组合测试里所有"失败"全是测试脚本自身错。代码至今零冤案。**先复核测试用例再改代码。**
 2. **便携 Python 3.13.12 无 tkinter** → 弹窗必须用系统 Python 3.13.15。
 3. **`scripts/gws.py` 会遮蔽 `gws` 包名** → 测试脚本里 import drop_dialog 要用 `importlib.util.spec_from_file_location` 按路径加载，不能 `sys.path.insert('scripts')`。
 4. **中文 txt 编码探测必须 strict**：`raw.decode(enc, errors="ignore")` 永不抛异常，不能用来试编码。顺序 utf-8 → gbk → gb18030，先处理 BOM。
@@ -111,34 +106,36 @@
 10. **结构改动唯一合法路径**：新增编号迁移文件（migrations/00X_xxx.sql）→ 过 verify。禁止 rename 表/列、禁止复用 id、禁止删列。`tests/integration/test_schema_contract.py` 把 22 表列名钉死，改名即 FAIL。
 11. **不要重跑已完成的上游阶段**；改代码后必跑 `PYTHONPATH=src python scripts/verify.py`（七步门禁），全 PASS 才算完。
 12. **GitHub 推送被拒（403 denied to QUEQUE0926）**= 令牌缺 Contents 权限或代理端口变了，先查这两样，别瞎重试。连续失败 2 次停手写 REVIEW_REQUEST.md。
-13. **REVIEW_REQUEST.md 是活文档**：2026-09-12 那条 403 阻塞已结案（✅ 段留在文件里），新阻塞追加新段，别删旧记录。它还没进 git 存档，下次 dev 存档时一起 `git add`。
-14. **清空数据库 = 逐表 DELETE 业务数据，`schema_migrations` 表绝对不能清**（2026-09-12 血泪坑）：清了它库就"失忆"，下次导入会重放迁移，003 的 `ALTER TABLE ADD position` 报 duplicate column name: position。修复方式是把缺的 (version, name) 记录补回该表（名称对应 migrations/*.sql 文件名去掉编号前缀）。
-15. **本环境删除文件会被 genie-trash 安全机制拦截**（I 盘无回收站，fail-closed），且被占用的文件 mv 不动 → "清空/删除"优先用逐表 DELETE 或先 cp 备份；单次 git push 403 若令牌权限已修好，先重试一次再排查（代理偶发抖动）。
+13. **REVIEW_REQUEST.md 是活文档**：新阻塞追加新段，别删旧记录。
+14. **清空数据库 = 逐表 DELETE 业务数据，`schema_migrations` 表绝对不能清**：清了它库就"失忆"，下次导入会重放迁移，003 的 `ALTER TABLE ADD position` 报 duplicate column name。修复方式=把缺的 (version, name) 记录补回该表（名称对应 migrations/*.sql 文件名去掉编号前缀）。
+15. **本环境删除文件会被 genie-trash 安全机制拦截**（I 盘无回收站，fail-closed），且被占用的文件 mv 不动 → "清空/删除"优先用逐表 DELETE 或先 cp 备份。
 16. **printf 写含 `\U`/`\f` 的 bat 会被转义吃掉** → 写 Windows bat 用 Write 工具，不用 shell printf。
-17. **拷贝 WAL 模式的 SQLite 库不能直接 cp app.db**（会丢未合并数据，表现是"只查出一半"）→ 用 Python `sqlite3` 的 `src.backup(dst)` 接口拷，沙盒试跑一律走这条路。
-18. **转写工具的"发言人1/2"只当线索不当真相**：它分得清"不同声音"，分不清"是真人还是游戏语音"。按文件级映射处理（星际2 发言人2→game_audio、镇邪Ⅱ 发言人2→teammate，依据已记 audit_log），发现整文件映射反了一条 UPDATE 翻转即可。误归属影响极小（只改枚举值），别为此大动干戈。
-19. **ASR 同音变体**：游戏名在台词里会被转错（镇邪Ⅱ→"正邪"出现过 7 次），游戏提及巡逻靠 game_aliases 花名册，发现变体就补别名登记，别改代码。
-20. **断行粒度跨源差异巨大**（行中位数 4~29 字，银翼喵侍 34% 超 80 字）：长度信号只能做"文件内部相对值"（如每集 p90），禁止用绝对阈值（40 字算长句之类）。
-21. **报告呈现规矩（用户否决过的方案不要再提）**：① 提名报告**每个游戏一份工作台**，不堆一个大文件；② 分档按**每游戏内部相对分**（高=前30%，且详情首屏上限 20 张，第 21 名起降入单行备查）；③ 仓库根 `exports/` **不碰、不做镜像同步**（用户明确否决）；④ 报告只显示命中句引文，`[game_audio]`/"发言人N"噪音行不进报告。
-22. **AGENTS.md 唯一注册表已扩到 8 组枚举**（2026-09-12 用户批准）：新增 source_type / tags.category / asset_type / consumer_type，和 03_DATA_MODEL.md 的枚举表对齐，代码里禁造同义词。
-23. **created_at 只有秒级精度**，同一秒建档的两行 ORDER BY created_at 会打平、顺序随机 → 一切"按时间兜底"的排序必须再补 `rowid`（2026-09-12 sort_key 上线时 verify 抓出过）。
-24. ~~make_episodes 的幂等跳过是"版本级"~~ **已修复（2026-09-12 晚，commit 9783eec）**：跳过判断已改成源级（按该源自己的 segments 是否已在 episode_segments 里判断）。同版本第二源可直接再跑。注意 `--source` 前缀匹配会撞上同批导入的源（UUIDv7 时间前缀相同），精确指定要用完整 id。
-25. **classify_speakers.py / make_episodes.py 都支持 `--source <id前缀>`** 可选过滤（只处理命中的源），批量跑单源用它；不带参数仍是全库扫。注意前缀会撞同批导入的源（UUIDv7 时间前缀相同），精确指定用完整 id。
+17. **拷贝 WAL 模式的 SQLite 库不能直接 cp app.db**（会丢未合并数据）→ 用 Python `sqlite3` 的 `src.backup(dst)` 接口拷。
+18. **转写工具的"发言人1/2"只当线索不当真相**：按文件级映射处理（星际2 发言人2→game_audio、镇邪Ⅱ 发言人2→teammate），误归属一条 UPDATE 翻转即可。
+19. **ASR 同音变体**：游戏名在台词里会被转错，游戏提及巡逻靠 game_aliases 花名册，发现变体就补别名登记，别改代码。
+20. **断行粒度跨源差异巨大**：长度信号只能做"文件内部相对值"（如每集 p90），禁止用绝对阈值。
+21. **报告呈现规矩（用户否决过的方案不要再提）**：① 提名报告**每个游戏一份工作台**；② 分档按**每游戏内部相对分**；③ 仓库根 `exports/` **不碰、不做镜像同步**；④ 报告只显示命中句引文，噪音行不进报告。
+22. **AGENTS.md 唯一注册表已扩到 8 组枚举**：source_type / tags.category / asset_type / consumer_type，代码里禁造同义词。
+23. **created_at 只有秒级精度** → 一切"按时间兜底"的排序必须再补 `rowid`。
+24. **make_episodes 的幂等跳过是源级**（commit 9783eec）：跳过判断按该源自己的 segments 是否已在 episode_segments 里。注意 `--source` 前缀匹配会撞同批导入的源（UUIDv7 时间前缀相同），精确指定用完整 id。
+25. **classify_speakers.py / make_episodes.py 都支持 `--source <id前缀>`** 可选过滤。
 26. **qwen3 系列默认"思考模式"**：不关思考会烧光 num_predict 输出空串。要么请求里 `"think": false`，要么用 JSON schema（`"format": {...}`）。
-27. **本地模型的判断岗位已定，不要回退**：qwen3:1.7b 做绝对判断=8窗全收（零区分度）；deepseek-r1 7.6B 绝对判断偏松（连干扰项都 KEEP+高置信）但格式化输出和信号标签合格；主判=qwen3:4b-instruct-2507（对候选/干扰项有梯度）。自由文本格式让 r1 解析失败 11/20——**结构化输出必须 Ollama JSON schema 铐住**，且 schema 的 maxItems 它不执行，数量上限和去重要代码自己兜。
-28. **screen_windows 双分制别改回**：总分只做入围门槛（≥3），排序用密度分（每类每窗计2次封顶 ÷ 句数×10）。曾实测总分与窗口长度相关 r=0.68（话多红利）、惊讶词刷分。单句反转正则已撤（55窗0命中），反转归"同集配对"算法管。
-29. **窗口匹配键必须含 source_id**：同版本多源时集名和行号会完全一样（两个源的"E01 第1行"），按集名+行号匹配会配错窗口、逐字锁误杀。
+27. **本地模型的判断岗位已定，不要回退**：主判=qwen3:4b-instruct-2507；自由文本格式让 r1 解析失败——**结构化输出必须 Ollama JSON schema 铐住**，且 schema 的 maxItems 它不执行，数量上限和去重要代码自己兜。
+28. **screen_windows 双分制别改回**：总分只做入围门槛（≥3），排序用密度分。曾实测总分与窗口长度相关 r=0.68。单句反转正则已撤。
+29. **窗口匹配键必须含 source_id**：同版本多源时集名和行号会完全一样，按集名+行号匹配会配错窗口。
 30. **原话逐字锁对谁都生效**（去空白后引文必须命中窗口原文），AI 直产卡（--from-json）也一样要过锁；不中的重试一次，再不中进 human_check，绝不静默入库。
-31. **human_check 每轮全量重写**，且必须登记两类：逐字锁失败 + 各卡 web_log 里"待人工"项（ASR 变体/游戏内数值）。用 `if human_check:` 只在有失败时写文件，会留旧账坑人（踩过）。
-32. **大段 Edit/补丁后必须 `ast.parse` + grep 检查**：本次会话多次出现替换引入乱码字（"扎/羴/糘"）和弯引号破坏语法。
-33. **git push 连接失败**：先重试一次（代理偶发抖动，本次两次自愈）；再失败 netstat 查代理端口（7890 曾失效换端口，直连 GitHub 挂起不可行），连续 2 次失败按规矩停手写 REVIEW_REQUEST.md（此前那条代理阻塞已自愈结案）。
-34. **联网规矩（2026-09-13 大修订，取代旧版"来源规矩"）**：事实核验与社区佐证/扫描分轨。事实核验查官方一手源（商店页→公告/patch notes→厂商官网→原始访谈→论文/文档→可靠媒体），按 5 类核验对象触发、不受价值档限制；易变信息当日重查；虚构设定不外部对照。社区平台（14 个：B站/其乐/小黑盒/小红书/微博/贴吧/知乎/机核/TapTap/好游快爆/3DM/游民星空/Steam社区/Reddit）只作佐证，结论必须带等级措辞（强证实/弱证实/反证/无信号/无法验证，措辞冻结在 05 文档），弱证实不能单独作结论、反证转 human_check 不许 AI 自改。每条核验输出三件套：结论+具体链接+来源页逐字原文片段（摘不出来的来源不许列）。**小黑盒专属链路**：匿名搜索不可用，必须走社区 id→话题流——零联网查 `I:\AIstore\13.xhhcatch\xiaoheihe_anonymous_ai_project_docs\data\xhh.db` 的 topic_catalog（灰烬之国=665862，已实测通），不联网找 id 不猜 id，查不到停手转 human_check。详见 05_MATERIAL_CARD_SYSTEM.md 联网规矩节。
+31. **human_check 每轮全量重写**，且必须登记两类：逐字锁失败 + 各卡 web_log 里"待人工"项。用 `if human_check:` 只在有失败时写文件，会留旧账坑人（踩过）。
+32. **大段 Edit/补丁后必须 `ast.parse` + grep 检查**：会话里出现过替换引入乱码字和弯引号破坏语法。
+33. **git push 连接失败**：先重试一次（代理偶发抖动）；再失败 netstat 查代理端口（7890 曾失效换端口），连续 2 次失败按规矩停手写 REVIEW_REQUEST.md。
+34. **联网规矩（2026-09-13 大修订，取代旧版来源规矩）**：事实核验与社区佐证/扫描分轨，等级措辞冻结在 05 文档「联网规矩」节，每条强制三件套（结论+链接+来源页逐字片段）。小黑盒专属链路：匿名搜索不可用，必须走社区 id→话题流——零联网查 `I:\AIstore\13.xhhcatch\xiaoheihe_anonymous_ai_project_docs\data\xhh.db` 的 topic_catalog（灰烬之国=665862 已实测通，20 帖存 `data/dev/tmp/xhh_665862_feed.json`），不联网找 id 不猜 id，查不到停手转 human_check。知乎专栏会 403（已记录，不硬闯）。**Steam 商店页/新闻 API 本机可直连（走 urllib + 空 ProxyHandler + verify=False 的 ssl context，不走代理）**，代理 7890 对 store.steampowered.com 反而连不上。
 35. **管线脚本不支持 `--help`**：screen_windows / coarse_gate / craft_cards 传 `--help` 会当真开跑（craft_cards 会真调 LLM 烧时间）。看用法读脚本头部 docstring。
-36. **classify_speakers.py 和 make_episodes.py 默认试跑不落库，必须加 `--apply`**。跑完 screen_windows 报"0 个游戏 0 窗口"，第一嫌疑就是分类没落库（speaker 全 unknown 时信号词照样能命中，但 usable 集合为空）。另外切集跳过判断是源级幂等：重切某源要先 DELETE 该源的 episode_segments 和对应 episodes。
-37. **app.db 可能被无名系统进程占用删不掉**（WinError 32，进程列表查不到占用者，重启后可删）→ 清库别硬删文件，用逐表 DELETE 业务数据（`schema_migrations` 绝对不清，见坑14）。
-38. **重切集会移动窗口锚点**：make_episodes 每集段数微调后 line_start 全变，`my_cards.json` 里的窗口键（source_id+集名+行号）失效，craft_cards 会报"找不到窗口"。解法=重映射：对每个卡组找"同源且全部 quote 逐字命中"的新窗口，改键后重跑 `--from-json`。quote 是逐字锁和回查的锚，原文没变它就不会失效。
+36. **classify_speakers.py 和 make_episodes.py 默认试跑不落库，必须加 `--apply`**。跑完 screen_windows 报"0 个游戏 0 窗口"，第一嫌疑就是分类没落库。重切某源要先 DELETE 该源的 episode_segments 和对应 episodes。
+37. **app.db 可能被无名系统进程占用删不掉**（WinError 32）→ 清库别硬删文件，用逐表 DELETE 业务数据（`schema_migrations` 绝对不清）。
+38. **重切集会移动窗口锚点**：make_episodes 每集段数微调后 line_start 全变，`my_cards.json` 里的窗口键失效。解法=重映射：对每个卡组找"同源且全部 quote 逐字命中"的新窗口，改键后重跑 `--from-json`。quote 是逐字锁和回查的锚，原文没变它就不会失效。
 39. **`data/` 不进 git**：只改卡、改报告时 `git commit` 会是 "nothing to commit"，正常；只有 src/scripts/migrations/HANDOFF 等代码文档变更才有存档点。
-40. **写卡数据的标点规矩**：web_log/联网字段里不要自己带"待人工："前缀——虽然 craft_cards 渲染时会自动剥离（程序侧双保险已上线），但数据干净少踩坑。卡内标点用直角引号『』，quote 必须与转录逐字一致（含错别字），预先用 norm+find 自查一遍再送渲染，别浪费逐字锁重试。
+40. **写卡数据的标点规矩**：web_log/联网字段里不要自己带"待人工："前缀——craft_cards 渲染时会自动剥离（程序侧双保险），但数据干净少踩坑。卡内标点用直角引号『』，quote 必须与转录逐字一致（含错别字），预先用 norm+find 自查一遍再送渲染。
+41. **segments 表的行区间列是 `line_start`/`line_end`**（不是 line_number）——import_cards 查 segment 时踩过。写库类脚本（import_cards）风格：默认 dry-run、`--apply` 落库、写 audit_log。
+42. **小黑盒链路依赖**：跑 xhh 客户端要先 `pip install pyyaml`（config 用 yaml）；环境会打印"curl_cffi 未安装退回 httpx"的警告，属正常。
 
 ## 六、验证方式速查
 
@@ -156,7 +153,7 @@ python scripts/gws.py list
 GWS_ENV=test python scripts/gws.py ...   # 环境变量优先生效
 ```
 
-**每日工作日志**：`.workbuddy/memory/2026-09-11.md`、`2026-09-12.md`（有本轮全部细节）。工程纪律见 `02_ENGINEERING_RULES.md`，数据模型见 `03_DATA_MODEL.md`，AI 门规见 `AGENTS.md`。
+**每日工作日志**：`.workbuddy/memory/`（2026-09-11、2026-09-12 有细节）。工程纪律见 `02_ENGINEERING_RULES.md`，数据模型见 `03_DATA_MODEL.md`，素材卡系统见 `05_MATERIAL_CARD_SYSTEM.md`，AI 门规见 `AGENTS.md`。
 
 **本仓库 git 常用命令**（先 `git status` 确认当前在哪个分支再操作）：
 ```bash
