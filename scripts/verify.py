@@ -35,7 +35,10 @@ EXPECTED_TABLES = {
     "episodes", "episode_segments", "material_cards", "material_card_evidence",
     "inspiration_cards", "tags", "asset_tags", "cross_references",
     "usage_records", "projects", "project_assets", "claims", "claim_evidence",
-    "articles", "audit_log", "schema_migrations",
+    "articles", "audit_log", "game_aliases",
+    "events", "event_evidence", "questions", "question_events",
+    "threads", "thread_events", "event_relations",
+    "schema_migrations",
 }
 
 _results: list[tuple[str, bool, str]] = []

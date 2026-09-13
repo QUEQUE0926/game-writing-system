@@ -39,6 +39,14 @@
 - **tags.category**: mechanic / experience / analysis / writing_use / custom
 - **asset_type**（asset_tags / project_assets / usage_records / cross_references 的 from_type / to_type）: material_card / inspiration_card
 - **usage_records.consumer_type**: project / article
+- **events.level**: lite / full（迁移 005，2026-09-14）
+- **V2 通用三档**（events.value_level、events.confidence、questions.strength、threads.confidence、event_relations.confidence）: HIGH / MEDIUM / LOW
+- **events.event_type**（多选，JSON 数组存储）: emotion_shift / mechanism_learning / opinion_change / expectation_gap / failure / breakthrough / strategy_change / build_formation / difficulty / progression / usability / balance / narrative_response / performance_issue / other
+- **questions.question_type**: design / experience / comparison / mechanism / cause / evaluation
+- **questions.resolution**（与长期实体 status 列并存，互不占位）: OPEN / ANSWERED / DROPPED
+- **threads.maturity**: SEED / DEVELOPING / MATURE
+- **thread_events.role**（体验角色，不是文章段落顺序）: setup / development / turning_point / payoff / supporting / counterexample / branch
+- **event_relations.relation**: SAME / DEVELOPS / CONTRADICTS / CAUSES / SUPPORTS / PARALLEL / UNRELATED
 
 ## 遇到拿不准的事
 
